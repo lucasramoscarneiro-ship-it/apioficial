@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8" />
+    <title>Painel WhatsApp Oficial</title>
+    <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+<div class="app-container">
+
+    <!-- COLUNA ESQUERDA: conversas -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>Conversas</h2>
+        </div>
+        <div class="sidebar-search">
+            <input type="text" id="search-input" placeholder="Buscar contato ou número" />
+        </div>
+        <div id="conversations-list" class="conversations-list">
+            <!-- preenchido via JS -->
+        </div>
+    </div>
+
+    <!-- COLUNA DIREITA: chat + campanhas -->
+    <div class="chat-area">
+
+        <!-- HEADER DO CHAT -->
+        <div class="chat-header">
+            <div id="chat-contact-name" class="chat-contact-name">Selecione uma conversa</div>
+            <div class="chat-contact-info" id="chat-contact-info"></div>
+        </div>
+
+        <!-- HISTÓRICO DE MENSAGENS -->
+        <div id="messages-container" class="messages-container">
+            <!-- mensagens via JS -->
+        </div>
+
+        <!-- INPUT DE MENSAGEM -->
+        <div class="chat-input-area">
+            <input type="text" id="message-input" placeholder="Escreva uma mensagem" />
+            <input type="text" id="phone-number-id-input" placeholder="PHONE_NUMBER_ID" />
+            <button id="send-button">Enviar</button>
+        </div>
+
+        <!-- ÁREA DE CAMPANHAS -->
+        <div class="campaign-container">
+            <h3>📣 Disparo em massa (Campanhas)</h3>
+
+            <div class="campaign-mode-switch">
+                <label>
+                    <input type="radio" name="campaign-mode" value="text" checked />
+                    Texto livre (janela 24h)
+                </label>
+                <label>
+                    <input type="radio" name="campaign-mode" value="template" />
+                    Template oficial
+                </label>
+            </div>
+
+            <div class="campaign-form">
+                <input type="text" id="campaign-name" placeholder="Nome da campanha" />
+
+                <input type="text" id="campaign-phone-number-id" placeholder="PHONE_NUMBER_ID" />
+
+                <textarea id="campaign-numbers" rows="4"
+                          placeholder="Cole aqui os números (um por linha, ex: 5511999999999)"></textarea>
+
+                <!-- Campos modo TEXTO -->
+                <div id="campaign-text-fields">
+                    <textarea id="campaign-message" rows="4"
+                              placeholder="Mensagem de texto (somente para contatos dentro da janela de 24h)">
+                    </textarea>
+                </div>
+
+                <!-- Campos modo TEMPLATE -->
+                <div id="campaign-template-fields" style="display:none;">
+                    <input type="text" id="campaign-template-name" placeholder="Nome do template (ex: promo_black_friday)" />
+                    <input type="text" id="campaign-template-language" placeholder="Idioma (ex: pt_BR)" value="pt_BR" />
+
+                    <textarea id="campaign-template-params" rows="3"
+                              placeholder="Parâmetros do corpo ({{1}}, {{2}}, ...) separados por linha.
+Ex:
+Lucas
+Americanas
+50%">
+                    </textarea>
+                </div>
+
+                <button id="btn-start-campaign">Iniciar campanha</button>
+            </div>
+
+            <div class="campaign-status-area">
+                <h4>Status das campanhas</h4>
+                <div id="campaigns-status"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

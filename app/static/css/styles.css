@@ -1,0 +1,220 @@
+body {
+    margin: 0;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background-color: #111b21;
+    color: #e9edef;
+}
+
+.app-container {
+    display: flex;
+    height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 30%;
+    max-width: 420px;
+    background-color: #202c33;
+    border-right: 1px solid #202c33;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid #202c33;
+}
+
+.sidebar-search {
+    padding: 8px 16px;
+    border-bottom: 1px solid #202c33;
+}
+
+.sidebar-search input {
+    width: 100%;
+    padding: 8px;
+    border-radius: 8px;
+    border: none;
+    outline: none;
+}
+
+.conversations-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.conversation-item {
+    padding: 10px 16px;
+    border-bottom: 1px solid #202c33;
+    cursor: pointer;
+}
+
+.conversation-item:hover {
+    background-color: #2a3942;
+}
+
+.conversation-title {
+    font-weight: 500;
+}
+
+.conversation-last-message {
+    margin-top: 4px;
+    font-size: 0.85rem;
+    color: #8696a0;
+}
+
+/* Chat */
+.chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background-color: #0b141a;
+}
+
+.chat-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid #202c33;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-contact-name {
+    font-weight: 600;
+}
+
+.chat-contact-info {
+    font-size: 0.85rem;
+    color: #8696a0;
+}
+
+.messages-container {
+    flex: 1;
+    padding: 12px 16px;
+    overflow-y: auto;
+    background-image: linear-gradient(180deg, #111b21, #0b141a);
+}
+
+.message-row {
+    display: flex;
+    margin-bottom: 6px;
+}
+
+.message-row.outgoing {
+    justify-content: flex-end;
+}
+
+.message-row.incoming {
+    justify-content: flex-start;
+}
+
+.message-bubble {
+    max-width: 60%;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    line-height: 1.3;
+    position: relative;
+}
+
+.message-row.outgoing .message-bubble {
+    background-color: #005c4b;
+    border-bottom-right-radius: 0;
+}
+
+.message-row.incoming .message-bubble {
+    background-color: #202c33;
+    border-bottom-left-radius: 0;
+}
+
+.message-time {
+    font-size: 0.7rem;
+    color: #8696a0;
+    margin-top: 3px;
+    text-align: right;
+}
+
+/* Input do chat */
+.chat-input-area {
+    padding: 8px 12px;
+    border-top: 1px solid #202c33;
+    display: flex;
+    gap: 8px;
+}
+
+.chat-input-area input[type="text"] {
+    flex: 1;
+    padding: 8px;
+    border-radius: 8px;
+    border: none;
+    outline: none;
+}
+
+.chat-input-area button {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    background-color: #00a884;
+    color: white;
+    font-weight: 500;
+}
+
+/* Campanhas */
+.campaign-container {
+    border-top: 1px solid #202c33;
+    padding: 12px 16px;
+    background-color: #111b21;
+    max-height: 45vh;
+    overflow-y: auto;
+}
+
+.campaign-container h3 {
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+
+.campaign-mode-switch {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 8px;
+    font-size: 0.85rem;
+}
+
+.campaign-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 600px;
+}
+
+.campaign-form input[type="text"],
+.campaign-form textarea {
+    width: 100%;
+    padding: 8px;
+    border-radius: 8px;
+    border: none;
+    outline: none;
+    background-color: #202c33;
+    color: #e9edef;
+    font-size: 0.9rem;
+}
+
+.campaign-form button {
+    align-self: flex-start;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    background-color: #00a884;
+    color: white;
+    font-weight: 500;
+}
+
+.campaign-status-area {
+    margin-top: 12px;
+    font-size: 0.9rem;
+}
+
+.campaign-status-area h4 {
+    margin: 0 0 4px 0;
+}
