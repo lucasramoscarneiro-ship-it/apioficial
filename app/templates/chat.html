@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8" />
+    <title>Painel WhatsApp - Conversas</title>
+    <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+<header class="top-nav">
+    <div class="top-nav-left">
+        <span class="top-nav-title">Painel WhatsApp Oficial</span>
+    </div>
+    <nav class="top-nav-right">
+        <a href="/" class="top-nav-link top-nav-link-active">Conversas</a>
+        <a href="/campanhas" class="top-nav-link">Campanhas</a>
+    </nav>
+</header>
+
+<div class="app-container">
+
+    <!-- COLUNA ESQUERDA: conversas -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>Conversas</h2>
+        </div>
+        <div class="sidebar-search">
+            <input type="text" id="search-input" placeholder="Buscar contato ou número" />
+        </div>
+        <div id="conversations-list" class="conversations-list">
+            <!-- preenchido via JS -->
+        </div>
+    </div>
+
+    <!-- COLUNA DIREITA: chat -->
+    <div class="chat-area">
+
+        <div class="chat-header">
+            <div id="chat-contact-name" class="chat-contact-name">Selecione uma conversa</div>
+            <div class="chat-contact-info" id="chat-contact-info"></div>
+        </div>
+
+        <div id="messages-container" class="messages-container">
+            <!-- mensagens via JS -->
+        </div>
+
+        <div class="chat-input-area">
+            <input type="text" id="message-input" placeholder="Escreva uma mensagem" />
+            <input type="text" id="phone-number-id-input" placeholder="PHONE_NUMBER_ID" />
+            <button id="send-button">Enviar</button>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/chat.js"></script>
+</body>
+</html>

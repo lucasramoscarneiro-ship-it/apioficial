@@ -5,12 +5,70 @@ body {
     color: #e9edef;
 }
 
+/* NAV SUPERIOR */
+
+.top-nav {
+    height: 48px;
+    background-color: #202c33;
+    border-bottom: 1px solid #202c33;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    box-sizing: border-box;
+}
+
+.top-nav-title {
+    font-weight: 600;
+}
+
+.top-nav-right {
+    display: flex;
+    gap: 8px;
+}
+
+.top-nav-link {
+    color: #e9edef;
+    background-color: transparent;
+    border: none;
+    font-size: 0.9rem;
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.top-nav-link:hover {
+    background-color: #2a3942;
+}
+
+.tab-active {
+    background-color: #00a884;
+    color: #0b141a;
+}
+
+/* TABS CONTEÚDO */
+
+.tab-content {
+    height: calc(100vh - 48px);
+}
+
+.tab-hidden {
+    display: none;
+}
+
+.tab-visible {
+    display: block;
+}
+
+/* LAYOUT PRINCIPAL (CHAT) */
+
 .app-container {
     display: flex;
-    height: 100vh;
+    height: 100%;
 }
 
 /* Sidebar */
+
 .sidebar {
     width: 30%;
     max-width: 420px;
@@ -64,6 +122,7 @@ body {
 }
 
 /* Chat */
+
 .chat-area {
     flex: 1;
     display: flex;
@@ -134,6 +193,7 @@ body {
 }
 
 /* Input do chat */
+
 .chat-input-area {
     padding: 8px 12px;
     border-top: 1px solid #202c33;
@@ -159,16 +219,31 @@ body {
     font-weight: 500;
 }
 
-/* Campanhas */
-.campaign-container {
-    border-top: 1px solid #202c33;
-    padding: 12px 16px;
+/* PÁGINA DE CAMPANHAS */
+
+.campaigns-page-container {
+    display: flex;
+    flex-direction: row;
+    gap: 16px;
+    padding: 16px;
+    box-sizing: border-box;
+    height: 100%;
+    background-color: #0b141a;
+}
+
+.campaigns-form-section,
+.campaigns-list-section {
+    flex: 1;
     background-color: #111b21;
-    max-height: 45vh;
+    border-radius: 8px;
+    padding: 16px;
+    box-sizing: border-box;
+    border: 1px solid #202c33;
     overflow-y: auto;
 }
 
-.campaign-container h3 {
+.campaigns-form-section h2,
+.campaigns-list-section h2 {
     margin-top: 0;
     margin-bottom: 8px;
 }
@@ -210,11 +285,38 @@ body {
     font-weight: 500;
 }
 
-.campaign-status-area {
-    margin-top: 12px;
+.campaigns-status-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
     font-size: 0.9rem;
 }
 
-.campaign-status-area h4 {
-    margin: 0 0 4px 0;
+.campaign-status-item {
+    padding: 8px;
+    border-radius: 6px;
+    background-color: #202c33;
+}
+
+/* Responsivo básico */
+
+@media (max-width: 900px) {
+    .app-container {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        width: 100%;
+        max-width: none;
+        height: 40vh;
+    }
+
+    .chat-area {
+        height: 60vh;
+    }
+
+    .campaigns-page-container {
+        flex-direction: column;
+        height: auto;
+    }
 }

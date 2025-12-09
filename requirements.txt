@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
 jinja2
-python-dotenv
 httpx
+python-dotenv
+psycopg2-binary

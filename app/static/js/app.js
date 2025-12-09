@@ -1,9 +1,43 @@
-let conversations = [];
-let selectedConversationId = null;
+// =======================
+// TABS (ABAS)
+// =======================
+
+function setupTabs() {
+    const buttons = document.querySelectorAll(".tab-button");
+    const tabChat = document.getElementById("tab-chat");
+    const tabCampaigns = document.getElementById("tab-campaigns");
+
+    buttons.forEach(btn => {
+        btn.addEventListener("click", () => {
+            const tab = btn.dataset.tab;
+
+            // Atualiza estado visual dos botões
+            buttons.forEach(b => b.classList.remove("tab-active"));
+            btn.classList.add("tab-active");
+
+            // Mostra / esconde conteúdo
+            if (tab === "chat") {
+                tabChat.classList.remove("tab-hidden");
+                tabChat.classList.add("tab-visible");
+                tabCampaigns.classList.remove("tab-visible");
+                tabCampaigns.classList.add("tab-hidden");
+            } else {
+                tabCampaigns.classList.remove("tab-hidden");
+                tabCampaigns.classList.add("tab-visible");
+                tabChat.classList.remove("tab-visible");
+                tabChat.classList.add("tab-hidden");
+            }
+        });
+    });
+}
+
 
 // =======================
 // CHAT
 // =======================
+
+let conversations = [];
+let selectedConversationId = null;
 
 // Carrega conversas
 async function loadConversations() {
@@ -15,6 +49,8 @@ async function loadConversations() {
 // Renderiza lista de conversas
 function renderConversations(list) {
     const container = document.getElementById("conversations-list");
+    if (!container) return;
+
     container.innerHTML = "";
 
     list.forEach(conv => {
@@ -41,16 +77,19 @@ function renderConversations(list) {
     });
 }
 
-// Seleciona conversa
+// Selecionar conversa
 async function selectConversation(id, conv) {
     selectedConversationId = id;
-    document.getElementById("chat-contact-name").textContent = conv.name || conv.wa_id;
-    document.getElementById("chat-contact-info").textContent = conv.wa_id;
+    const nameEl = document.getElementById("chat-contact-name");
+    const infoEl = document.getElementById("chat-contact-info");
+
+    if (nameEl) nameEl.textContent = conv.name || conv.wa_id;
+    if (infoEl) infoEl.textContent = conv.wa_id;
 
     await loadMessages(id);
 }
 
-// Carrega mensagens
+// Carrega mensagens da conversa
 async function loadMessages(conversationId) {
     const res = await fetch(`/api/conversations/${conversationId}/messages`);
     const msgs = await res.json();
@@ -60,6 +99,8 @@ async function loadMessages(conversationId) {
 // Renderiza mensagens
 function renderMessages(msgs) {
     const container = document.getElementById("messages-container");
+    if (!container) return;
+
     container.innerHTML = "";
 
     msgs.forEach(m => {
@@ -83,7 +124,7 @@ function renderMessages(msgs) {
     container.scrollTop = container.scrollHeight;
 }
 
-// Envia mensagem de texto no chat atual
+// Envia mensagem
 async function sendMessage() {
     if (!selectedConversationId) {
         alert("Selecione uma conversa primeiro.");
@@ -116,19 +157,22 @@ async function sendMessage() {
         body: JSON.stringify(body)
     });
 
-    if (res.ok) {
-        msgInput.value = "";
-        await loadMessages(selectedConversationId);
-        await loadConversations();
-    } else {
+    if (!res.ok) {
         const err = await res.text();
         alert("Erro ao enviar mensagem: " + err);
+        return;
     }
+
+    msgInput.value = "";
+    await loadMessages(selectedConversationId);
+    await loadConversations();
 }
 
-// Busca nas conversas
+// Busca conversas
 function setupSearch() {
     const input = document.getElementById("search-input");
+    if (!input) return;
+
     input.addEventListener("input", () => {
         const term = input.value.toLowerCase();
         const filtered = conversations.filter(c =>
@@ -139,8 +183,8 @@ function setupSearch() {
     });
 }
 
-// Polling para chat
-function setupPolling() {
+// Polling para atualizar conversas/mensagens
+function setupChatPolling() {
     setInterval(async () => {
         await loadConversations();
         if (selectedConversationId) {
@@ -210,7 +254,6 @@ async function startCampaign() {
             alert("Digite a mensagem de texto.");
             return;
         }
-
         body.message_text = message;
         body.template_name = null;
         body.template_language_code = null;
@@ -251,22 +294,25 @@ async function startCampaign() {
         return;
     }
 
-    const camp = await res.json();
-    console.log("Campanha criada:", camp);
     await loadCampaigns();
 }
 
 async function loadCampaigns() {
+    const container = document.getElementById("campaigns-status");
+    if (!container) return;
+
     const res = await fetch("/api/campaigns");
     const list = await res.json();
 
-    const container = document.getElementById("campaigns-status");
     container.innerHTML = "";
 
     list.forEach(c => {
         const div = document.createElement("div");
-        div.style.marginBottom = "4px";
-        div.textContent = `${c.name} - ${c.status} | Enviados: ${c.sent}/${c.total} | Falhas: ${c.failed}`;
+        div.className = "campaign-status-item";
+
+        const created = c.created_at ? new Date(c.created_at).toLocaleString("pt-BR") : "";
+
+        div.textContent = `${c.name} - ${c.status} | Enviados: ${c.sent}/${c.total} | Falhas: ${c.failed} | Criada em: ${created}`;
         container.appendChild(div);
     });
 }
@@ -277,18 +323,26 @@ function setupCampaignPolling() {
 
 
 // =======================
-// INICIALIZAÇÃO
+// INICIALIZAÇÃO GERAL
 // =======================
 
 document.addEventListener("DOMContentLoaded", async () => {
-    // Chat
-    document.getElementById("send-button").addEventListener("click", sendMessage);
-    document.getElementById("message-input").addEventListener("keydown", (e) => {
-        if (e.key === "Enter") sendMessage();
-    });
+    // Tabs
+    setupTabs();
 
+    // Chat
+    const sendBtn = document.getElementById("send-button");
+    if (sendBtn) {
+        sendBtn.addEventListener("click", sendMessage);
+    }
+    const msgInput = document.getElementById("message-input");
+    if (msgInput) {
+        msgInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") sendMessage();
+        });
+    }
     setupSearch();
-    setupPolling();
+    setupChatPolling();
     await loadConversations();
 
     // Campanhas

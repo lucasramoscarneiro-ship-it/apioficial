@@ -6,45 +6,60 @@
     <link rel="stylesheet" href="/static/css/styles.css" />
 </head>
 <body>
-<div class="app-container">
+<header class="top-nav">
+    <div class="top-nav-left">
+        <span class="top-nav-title">Painel WhatsApp Oficial</span>
+    </div>
+    <nav class="top-nav-right">
+        <button class="top-nav-link tab-button tab-active" data-tab="chat">Conversas</button>
+        <button class="top-nav-link tab-button" data-tab="campaigns">Campanhas</button>
+    </nav>
+</header>
 
-    <!-- COLUNA ESQUERDA: conversas -->
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <h2>Conversas</h2>
+<!-- ABA: CONVERSAS -->
+<div id="tab-chat" class="tab-content tab-visible">
+    <div class="app-container">
+
+        <!-- COLUNA ESQUERDA: conversas -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2>Conversas</h2>
+            </div>
+            <div class="sidebar-search">
+                <input type="text" id="search-input" placeholder="Buscar contato ou número" />
+            </div>
+            <div id="conversations-list" class="conversations-list">
+                <!-- preenchido via JS -->
+            </div>
         </div>
-        <div class="sidebar-search">
-            <input type="text" id="search-input" placeholder="Buscar contato ou número" />
-        </div>
-        <div id="conversations-list" class="conversations-list">
-            <!-- preenchido via JS -->
+
+        <!-- COLUNA DIREITA: chat -->
+        <div class="chat-area">
+
+            <div class="chat-header">
+                <div id="chat-contact-name" class="chat-contact-name">Selecione uma conversa</div>
+                <div class="chat-contact-info" id="chat-contact-info"></div>
+            </div>
+
+            <div id="messages-container" class="messages-container">
+                <!-- mensagens via JS -->
+            </div>
+
+            <div class="chat-input-area">
+                <input type="text" id="message-input" placeholder="Escreva uma mensagem" />
+                <input type="text" id="phone-number-id-input" placeholder="PHONE_NUMBER_ID" />
+                <button id="send-button">Enviar</button>
+            </div>
         </div>
     </div>
+</div>
 
-    <!-- COLUNA DIREITA: chat + campanhas -->
-    <div class="chat-area">
+<!-- ABA: CAMPANHAS -->
+<div id="tab-campaigns" class="tab-content tab-hidden">
+    <div class="campaigns-page-container">
 
-        <!-- HEADER DO CHAT -->
-        <div class="chat-header">
-            <div id="chat-contact-name" class="chat-contact-name">Selecione uma conversa</div>
-            <div class="chat-contact-info" id="chat-contact-info"></div>
-        </div>
-
-        <!-- HISTÓRICO DE MENSAGENS -->
-        <div id="messages-container" class="messages-container">
-            <!-- mensagens via JS -->
-        </div>
-
-        <!-- INPUT DE MENSAGEM -->
-        <div class="chat-input-area">
-            <input type="text" id="message-input" placeholder="Escreva uma mensagem" />
-            <input type="text" id="phone-number-id-input" placeholder="PHONE_NUMBER_ID" />
-            <button id="send-button">Enviar</button>
-        </div>
-
-        <!-- ÁREA DE CAMPANHAS -->
-        <div class="campaign-container">
-            <h3>📣 Disparo em massa (Campanhas)</h3>
+        <section class="campaigns-form-section">
+            <h2>📣 Criar campanha</h2>
 
             <div class="campaign-mode-switch">
                 <label>
@@ -63,7 +78,8 @@
                 <input type="text" id="campaign-phone-number-id" placeholder="PHONE_NUMBER_ID" />
 
                 <textarea id="campaign-numbers" rows="4"
-                          placeholder="Cole aqui os números (um por linha, ex: 5511999999999)"></textarea>
+                          placeholder="Cole os números (um por linha, ex: 5511999999999)">
+                </textarea>
 
                 <!-- Campos modo TEXTO -->
                 <div id="campaign-text-fields">
@@ -74,8 +90,10 @@
 
                 <!-- Campos modo TEMPLATE -->
                 <div id="campaign-template-fields" style="display:none;">
-                    <input type="text" id="campaign-template-name" placeholder="Nome do template (ex: promo_black_friday)" />
-                    <input type="text" id="campaign-template-language" placeholder="Idioma (ex: pt_BR)" value="pt_BR" />
+                    <input type="text" id="campaign-template-name"
+                           placeholder="Nome do template (ex: promo_black_friday)" />
+                    <input type="text" id="campaign-template-language"
+                           placeholder="Idioma (ex: pt_BR)" value="pt_BR" />
 
                     <textarea id="campaign-template-params" rows="3"
                               placeholder="Parâmetros do corpo ({{1}}, {{2}}, ...) separados por linha.
@@ -88,12 +106,15 @@ Americanas
 
                 <button id="btn-start-campaign">Iniciar campanha</button>
             </div>
+        </section>
 
-            <div class="campaign-status-area">
-                <h4>Status das campanhas</h4>
-                <div id="campaigns-status"></div>
+        <section class="campaigns-list-section">
+            <h2>📊 Campanhas</h2>
+            <div id="campaigns-status" class="campaigns-status-list">
+                <!-- preenchido via JS -->
             </div>
-        </div>
+        </section>
+
     </div>
 </div>
 
