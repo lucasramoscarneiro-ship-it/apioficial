@@ -14,8 +14,15 @@ from .models import (
     SendTextRequest,
     CampaignCreate,
 )
+from .politica import router as politica_router
+from .termos import router as termos_router
+
+
 
 app = FastAPI(title="Painel WhatsApp Oficial (API Oficial Meta)")
+
+app.include_router(politica_router)
+app.include_router(termos_router)
 
 # arquivos estáticos (CSS/JS) e templates
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
