@@ -4,7 +4,7 @@ from fastapi.responses import HTMLResponse
 router = APIRouter()
 
 @router.get("/termos", response_class=HTMLResponse)
-def termos_de_servico():
+async def termos_de_servico():
     return """
     <html>
         <head>
