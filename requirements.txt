@@ -4,3 +4,7 @@ jinja2
 httpx
 python-dotenv
 psycopg2-binary
+
+python-jose[cryptography]
+passlib[bcrypt]
+email-validator
