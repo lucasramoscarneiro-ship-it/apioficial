@@ -33,6 +33,21 @@ function setupTabs() {
 
 
 // =======================
+// AUTH HELPERS
+// =======================
+
+// index.html criou window.apiFetch (com Bearer automático).
+// Se por algum motivo não existir, cai no fetch normal (mas sem auth).
+async function api(url, options = {}) {
+    if (window.apiFetch) {
+        return await window.apiFetch(url, options);
+    }
+    // fallback
+    return await fetch(url, options);
+}
+
+
+// =======================
 // CHAT
 // =======================
 
@@ -41,9 +56,15 @@ let selectedConversationId = null;
 
 // Carrega conversas
 async function loadConversations() {
-    const res = await fetch("/api/conversations");
-    conversations = await res.json();
-    renderConversations(conversations);
+    try {
+        const res = await api("/api/conversations");
+        conversations = await res.json();
+        renderConversations(conversations);
+    } catch (e) {
+        // se estiver deslogado, apiFetch já mostrou login
+        // evita estourar erro no console/polling
+        // console.warn("loadConversations:", e);
+    }
 }
 
 // Renderiza lista de conversas
@@ -91,9 +112,13 @@ async function selectConversation(id, conv) {
 
 // Carrega mensagens da conversa
 async function loadMessages(conversationId) {
-    const res = await fetch(`/api/conversations/${conversationId}/messages`);
-    const msgs = await res.json();
-    renderMessages(msgs);
+    try {
+        const res = await api(`/api/conversations/${conversationId}/messages`);
+        const msgs = await res.json();
+        renderMessages(msgs);
+    } catch (e) {
+        // console.warn("loadMessages:", e);
+    }
 }
 
 // Renderiza mensagens
@@ -134,8 +159,8 @@ async function sendMessage() {
     const msgInput = document.getElementById("message-input");
     const phoneNumberIdInput = document.getElementById("phone-number-id-input");
 
-    const text = msgInput.value.trim();
-    const phoneNumberId = phoneNumberIdInput.value.trim();
+    const text = (msgInput?.value || "").trim();
+    const phoneNumberId = (phoneNumberIdInput?.value || "").trim();
 
     if (!text || !phoneNumberId) {
         alert("Digite a mensagem e o PHONE_NUMBER_ID.");
@@ -151,21 +176,27 @@ async function sendMessage() {
         message: text
     };
 
-    const res = await fetch("/api/messages/text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-    });
+    try {
+        const res = await api("/api/messages/text", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        });
 
-    if (!res.ok) {
-        const err = await res.text();
-        alert("Erro ao enviar mensagem: " + err);
-        return;
+        if (!res.ok) {
+            const err = await res.text();
+            alert("Erro ao enviar mensagem: " + err);
+            return;
+        }
+
+        msgInput.value = "";
+        await loadMessages(selectedConversationId);
+        await loadConversations();
+
+    } catch (e) {
+        // apiFetch já pode ter mostrado login em caso de 401
+        // console.warn("sendMessage:", e);
     }
-
-    msgInput.value = "";
-    await loadMessages(selectedConversationId);
-    await loadConversations();
 }
 
 // Busca conversas
@@ -186,9 +217,15 @@ function setupSearch() {
 // Polling para atualizar conversas/mensagens
 function setupChatPolling() {
     setInterval(async () => {
-        await loadConversations();
-        if (selectedConversationId) {
-            await loadMessages(selectedConversationId);
+        // se não tiver token, não adianta ficar chamando
+        // (index.html controla o login)
+        try {
+            await loadConversations();
+            if (selectedConversationId) {
+                await loadMessages(selectedConversationId);
+            }
+        } catch (e) {
+            // ignora
         }
     }, 5000);
 }
@@ -282,39 +319,47 @@ async function startCampaign() {
         body.message_text = null;
     }
 
-    const res = await fetch("/api/campaigns", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-    });
+    try {
+        const res = await api("/api/campaigns", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        });
 
-    if (!res.ok) {
-        const err = await res.text();
-        alert("Erro ao criar campanha: " + err);
-        return;
+        if (!res.ok) {
+            const err = await res.text();
+            alert("Erro ao criar campanha: " + err);
+            return;
+        }
+
+        await loadCampaigns();
+    } catch (e) {
+        // console.warn("startCampaign:", e);
     }
-
-    await loadCampaigns();
 }
 
 async function loadCampaigns() {
     const container = document.getElementById("campaigns-status");
     if (!container) return;
 
-    const res = await fetch("/api/campaigns");
-    const list = await res.json();
+    try {
+        const res = await api("/api/campaigns");
+        const list = await res.json();
 
-    container.innerHTML = "";
+        container.innerHTML = "";
 
-    list.forEach(c => {
-        const div = document.createElement("div");
-        div.className = "campaign-status-item";
+        list.forEach(c => {
+            const div = document.createElement("div");
+            div.className = "campaign-status-item";
 
-        const created = c.created_at ? new Date(c.created_at).toLocaleString("pt-BR") : "";
+            const created = c.created_at ? new Date(c.created_at).toLocaleString("pt-BR") : "";
 
-        div.textContent = `${c.name} - ${c.status} | Enviados: ${c.sent}/${c.total} | Falhas: ${c.failed} | Criada em: ${created}`;
-        container.appendChild(div);
-    });
+            div.textContent = `${c.name} - ${c.status} | Enviados: ${c.sent}/${c.total} | Falhas: ${c.failed} | Criada em: ${created}`;
+            container.appendChild(div);
+        });
+    } catch (e) {
+        // console.warn("loadCampaigns:", e);
+    }
 }
 
 function setupCampaignPolling() {
@@ -335,14 +380,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (sendBtn) {
         sendBtn.addEventListener("click", sendMessage);
     }
+
     const msgInput = document.getElementById("message-input");
     if (msgInput) {
         msgInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") sendMessage();
         });
     }
+
     setupSearch();
     setupChatPolling();
+
+    // Só tenta carregar se estiver logado (token existe)
+    // Quem controla isso é o index.html.
     await loadConversations();
 
     // Campanhas
@@ -350,6 +400,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (btnCamp) {
         btnCamp.addEventListener("click", startCampaign);
     }
+
     setupCampaignModeSwitch();
     setupCampaignPolling();
     await loadCampaigns();

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, BackgroundTasks, Query
+from fastapi import FastAPI, Request, BackgroundTasks, Query, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -10,13 +10,12 @@ import os
 
 from .db import get_conn
 from .meta_client import send_whatsapp_text, send_whatsapp_template
-from .models import (
-    SendTextRequest,
-    CampaignCreate,
-)
+from .models import SendTextRequest, CampaignCreate
 from .politica import router as politica_router
 from .termos import router as termos_router
 
+# ✅ IMPORT CORRETO (RELATIVO) PARA NÃO DAR "No module named app"
+from .auth.dependencies import get_current_user
 
 
 app = FastAPI(title="Painel WhatsApp Oficial (API Oficial Meta)")
@@ -55,11 +54,11 @@ async def index(request: Request):
 
 
 # =======================
-# CONVERSAS E MENSAGENS (CHAT)
+# CONVERSAS E MENSAGENS (CHAT) - PROTEGIDO
 # =======================
 
 @app.get("/api/conversations")
-async def list_conversations():
+async def list_conversations(user=Depends(get_current_user)):
     """
     Lista conversas salvas no banco, ordenadas pela última mensagem.
     """
@@ -77,7 +76,7 @@ async def list_conversations():
 
 
 @app.get("/api/conversations/{conversation_id}/messages")
-async def get_conversation_messages(conversation_id: str):
+async def get_conversation_messages(conversation_id: str, user=Depends(get_current_user)):
     """
     Lista mensagens de uma conversa específica.
     """
@@ -96,7 +95,7 @@ async def get_conversation_messages(conversation_id: str):
 
 
 @app.post("/api/messages/text")
-async def send_text_message(payload: SendTextRequest):
+async def send_text_message(payload: SendTextRequest, user=Depends(get_current_user)):
     """
     Envia mensagem de texto pela API oficial da Meta
     e salva mensagem + conversa no banco (Supabase/Postgres).
@@ -154,7 +153,7 @@ async def send_text_message(payload: SendTextRequest):
 
 
 # =======================
-# WEBHOOK META
+# WEBHOOK META - NÃO PROTEGIDO (OBRIGATÓRIO)
 # =======================
 
 @app.get("/webhook/meta")
@@ -236,16 +235,15 @@ async def receive_webhook(request: Request):
 
 
 # =======================
-# CAMPANHAS (DISPARO EM MASSA)
+# CAMPANHAS (DISPARO EM MASSA) - PROTEGIDO
 # =======================
 
 @app.post("/api/campaigns")
-async def create_campaign(payload: CampaignCreate, background_tasks: BackgroundTasks):
+async def create_campaign(payload: CampaignCreate, background_tasks: BackgroundTasks, user=Depends(get_current_user)):
     """
     Cria uma campanha de disparo em massa (texto livre ou template)
     e dispara o envio em background.
     """
-
     # Valida: ou template OU texto
     if not payload.template_name and not payload.message_text:
         return {"error": "Informe template_name OU message_text."}
@@ -305,7 +303,7 @@ async def create_campaign(payload: CampaignCreate, background_tasks: BackgroundT
 
 
 @app.get("/api/campaigns")
-async def list_campaigns():
+async def list_campaigns(user=Depends(get_current_user)):
     """
     Lista campanhas.
     """
@@ -324,7 +322,7 @@ async def list_campaigns():
 
 
 @app.get("/api/campaigns/{campaign_id}/items")
-async def list_campaign_items(campaign_id: str):
+async def list_campaign_items(campaign_id: str, user=Depends(get_current_user)):
     """
     Lista itens (números) de uma campanha.
     """
@@ -391,7 +389,6 @@ async def run_campaign(campaign_id: str):
 
         try:
             if template_name:
-                # Envio via TEMPLATE oficial
                 await send_whatsapp_template(
                     to=to_number,
                     phone_number_id=phone_number_id,
@@ -400,7 +397,6 @@ async def run_campaign(campaign_id: str):
                     body_params=template_body_params,
                 )
             else:
-                # Envio de TEXTO livre (apenas dentro da janela de 24h)
                 await send_whatsapp_text(
                     to=to_number,
                     text=message_text,

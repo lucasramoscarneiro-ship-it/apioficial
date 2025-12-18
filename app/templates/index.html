@@ -1,123 +1,324 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8" />
-    <title>Painel WhatsApp Oficial</title>
-    <link rel="stylesheet" href="/static/css/styles.css" />
+  <meta charset="UTF-8" />
+  <title>Painel WhatsApp Oficial</title>
+  <link rel="stylesheet" href="/static/css/styles.css" />
+  <style>
+    /* LOGIN OVERLAY SIMPLES */
+    .login-overlay{
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    .login-card{
+      width: 360px;
+      background: #fff;
+      border-radius: 10px;
+      padding: 22px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.25);
+      font-family: Arial, sans-serif;
+    }
+    .login-card h2{ margin: 0 0 10px; }
+    .login-card p{ margin: 0 0 14px; color:#444; }
+    .login-card input{
+      width: 100%;
+      padding: 10px;
+      margin: 6px 0;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      outline: none;
+    }
+    .login-card button{
+      width: 100%;
+      padding: 10px;
+      margin-top: 10px;
+      border: 0;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .login-btn{ background:#111; color:#fff; }
+    .login-err{ margin-top: 10px; color: #b00020; font-size: 14px; display:none; }
+    .login-loading{ margin-top: 10px; color: #333; font-size: 14px; display:none; }
+    .top-nav-user{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      margin-left: 14px;
+    }
+    .btn-logout{
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,.25);
+      background: transparent;
+      color: #fff;
+      cursor: pointer;
+    }
+  </style>
 </head>
 <body>
+
+<!-- OVERLAY LOGIN -->
+<div id="loginOverlay" class="login-overlay" style="display:none;">
+  <div class="login-card">
+    <h2>Entrar</h2>
+    <p>Acesse o painel com seu usuário.</p>
+
+    <input id="loginEmail" type="email" placeholder="Email" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="Senha" autocomplete="current-password" />
+
+    <button id="loginBtn" class="login-btn">Entrar</button>
+
+    <div id="loginLoading" class="login-loading">Entrando...</div>
+    <div id="loginError" class="login-err">Email ou senha inválidos.</div>
+  </div>
+</div>
+
 <header class="top-nav">
-    <div class="top-nav-left">
-        <span class="top-nav-title">Painel WhatsApp Oficial</span>
+  <div class="top-nav-left">
+    <span class="top-nav-title">Painel WhatsApp Oficial</span>
+  </div>
+
+  <nav class="top-nav-right" style="display:flex; align-items:center;">
+    <button class="top-nav-link tab-button tab-active" data-tab="chat">Conversas</button>
+    <button class="top-nav-link tab-button" data-tab="campaigns">Campanhas</button>
+
+    <div class="top-nav-user">
+      <button id="btnLogout" class="btn-logout" title="Sair">Sair</button>
     </div>
-    <nav class="top-nav-right">
-        <button class="top-nav-link tab-button tab-active" data-tab="chat">Conversas</button>
-        <button class="top-nav-link tab-button" data-tab="campaigns">Campanhas</button>
-    </nav>
+  </nav>
 </header>
 
 <!-- ABA: CONVERSAS -->
 <div id="tab-chat" class="tab-content tab-visible">
-    <div class="app-container">
+  <div class="app-container">
 
-        <!-- COLUNA ESQUERDA: conversas -->
-        <div class="sidebar">
-            <div class="sidebar-header">
-                <h2>Conversas</h2>
-            </div>
-            <div class="sidebar-search">
-                <input type="text" id="search-input" placeholder="Buscar contato ou número" />
-            </div>
-            <div id="conversations-list" class="conversations-list">
-                <!-- preenchido via JS -->
-            </div>
-        </div>
-
-        <!-- COLUNA DIREITA: chat -->
-        <div class="chat-area">
-
-            <div class="chat-header">
-                <div id="chat-contact-name" class="chat-contact-name">Selecione uma conversa</div>
-                <div class="chat-contact-info" id="chat-contact-info"></div>
-            </div>
-
-            <div id="messages-container" class="messages-container">
-                <!-- mensagens via JS -->
-            </div>
-
-            <div class="chat-input-area">
-                <input type="text" id="message-input" placeholder="Escreva uma mensagem" />
-                <input type="text" id="phone-number-id-input" placeholder="PHONE_NUMBER_ID" />
-                <button id="send-button">Enviar</button>
-            </div>
-        </div>
+    <!-- COLUNA ESQUERDA: conversas -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <h2>Conversas</h2>
+      </div>
+      <div class="sidebar-search">
+        <input type="text" id="search-input" placeholder="Buscar contato ou número" />
+      </div>
+      <div id="conversations-list" class="conversations-list">
+        <!-- preenchido via JS -->
+      </div>
     </div>
+
+    <!-- COLUNA DIREITA: chat -->
+    <div class="chat-area">
+      <div class="chat-header">
+        <div id="chat-contact-name" class="chat-contact-name">Selecione uma conversa</div>
+        <div class="chat-contact-info" id="chat-contact-info"></div>
+      </div>
+
+      <div id="messages-container" class="messages-container">
+        <!-- mensagens via JS -->
+      </div>
+
+      <div class="chat-input-area">
+        <input type="text" id="message-input" placeholder="Escreva uma mensagem" />
+        <input type="text" id="phone-number-id-input" placeholder="PHONE_NUMBER_ID" />
+        <button id="send-button">Enviar</button>
+      </div>
+    </div>
+
+  </div>
 </div>
 
 <!-- ABA: CAMPANHAS -->
 <div id="tab-campaigns" class="tab-content tab-hidden">
-    <div class="campaigns-page-container">
+  <div class="campaigns-page-container">
 
-        <section class="campaigns-form-section">
-            <h2>📣 Criar campanha</h2>
+    <section class="campaigns-form-section">
+      <h2>📣 Criar campanha</h2>
 
-            <div class="campaign-mode-switch">
-                <label>
-                    <input type="radio" name="campaign-mode" value="text" checked />
-                    Texto livre (janela 24h)
-                </label>
-                <label>
-                    <input type="radio" name="campaign-mode" value="template" />
-                    Template oficial
-                </label>
-            </div>
+      <div class="campaign-mode-switch">
+        <label>
+          <input type="radio" name="campaign-mode" value="text" checked />
+          Texto livre (janela 24h)
+        </label>
+        <label>
+          <input type="radio" name="campaign-mode" value="template" />
+          Template oficial
+        </label>
+      </div>
 
-            <div class="campaign-form">
-                <input type="text" id="campaign-name" placeholder="Nome da campanha" />
+      <div class="campaign-form">
+        <input type="text" id="campaign-name" placeholder="Nome da campanha" />
+        <input type="text" id="campaign-phone-number-id" placeholder="PHONE_NUMBER_ID" />
 
-                <input type="text" id="campaign-phone-number-id" placeholder="PHONE_NUMBER_ID" />
+        <textarea id="campaign-numbers" rows="4"
+                  placeholder="Cole os números (um por linha, ex: 5511999999999)"></textarea>
 
-                <textarea id="campaign-numbers" rows="4"
-                          placeholder="Cole os números (um por linha, ex: 5511999999999)">
-                </textarea>
+        <!-- Campos modo TEXTO -->
+        <div id="campaign-text-fields">
+          <textarea id="campaign-message" rows="4"
+                    placeholder="Mensagem de texto (somente para contatos dentro da janela de 24h)"></textarea>
+        </div>
 
-                <!-- Campos modo TEXTO -->
-                <div id="campaign-text-fields">
-                    <textarea id="campaign-message" rows="4"
-                              placeholder="Mensagem de texto (somente para contatos dentro da janela de 24h)">
-                    </textarea>
-                </div>
+        <!-- Campos modo TEMPLATE -->
+        <div id="campaign-template-fields" style="display:none;">
+          <input type="text" id="campaign-template-name"
+                 placeholder="Nome do template (ex: promo_black_friday)" />
+          <input type="text" id="campaign-template-language"
+                 placeholder="Idioma (ex: pt_BR)" value="pt_BR" />
 
-                <!-- Campos modo TEMPLATE -->
-                <div id="campaign-template-fields" style="display:none;">
-                    <input type="text" id="campaign-template-name"
-                           placeholder="Nome do template (ex: promo_black_friday)" />
-                    <input type="text" id="campaign-template-language"
-                           placeholder="Idioma (ex: pt_BR)" value="pt_BR" />
-
-                    <textarea id="campaign-template-params" rows="3"
-                              placeholder="Parâmetros do corpo ({{1}}, {{2}}, ...) separados por linha.
+          <textarea id="campaign-template-params" rows="3"
+                    placeholder="Parâmetros do corpo ({{1}}, {{2}}, ...) separados por linha.
 Ex:
 Lucas
 Americanas
-50%">
-                    </textarea>
-                </div>
+50%"></textarea>
+        </div>
 
-                <button id="btn-start-campaign">Iniciar campanha</button>
-            </div>
-        </section>
+        <button id="btn-start-campaign">Iniciar campanha</button>
+      </div>
+    </section>
 
-        <section class="campaigns-list-section">
-            <h2>📊 Campanhas</h2>
-            <div id="campaigns-status" class="campaigns-status-list">
-                <!-- preenchido via JS -->
-            </div>
-        </section>
+    <section class="campaigns-list-section">
+      <h2>📊 Campanhas</h2>
+      <div id="campaigns-status" class="campaigns-status-list">
+        <!-- preenchido via JS -->
+      </div>
+    </section>
 
-    </div>
+  </div>
 </div>
 
+<!-- Seu app.js -->
 <script src="/static/js/app.js"></script>
+
+<script>
+  // =========================
+  // AUTH + FETCH COM BEARER
+  // =========================
+
+  const TOKEN_KEY = "painel_access_token";
+
+  function getToken(){
+    return localStorage.getItem(TOKEN_KEY);
+  }
+  function setToken(t){
+    localStorage.setItem(TOKEN_KEY, t);
+  }
+  function clearToken(){
+    localStorage.removeItem(TOKEN_KEY);
+  }
+
+  function showLogin(){
+    document.getElementById("loginOverlay").style.display = "flex";
+  }
+  function hideLogin(){
+    document.getElementById("loginOverlay").style.display = "none";
+  }
+
+  async function apiFetch(url, options = {}){
+    const token = getToken();
+    const headers = new Headers(options.headers || {});
+    headers.set("Content-Type", "application/json");
+
+    if (token){
+      headers.set("Authorization", "Bearer " + token);
+    }
+
+    const resp = await fetch(url, { ...options, headers });
+
+    // Se token inválido/expirado
+    if (resp.status === 401){
+      clearToken();
+      showLogin();
+      throw new Error("Não autorizado (401)");
+    }
+
+    return resp;
+  }
+
+  // Expor para o app.js usar (sem mudar seu arquivo agora)
+  window.apiFetch = apiFetch;
+
+  // =========================
+  // LOGIN
+  // =========================
+  const loginOverlay = document.getElementById("loginOverlay");
+  const loginBtn = document.getElementById("loginBtn");
+  const loginEmail = document.getElementById("loginEmail");
+  const loginPassword = document.getElementById("loginPassword");
+  const loginError = document.getElementById("loginError");
+  const loginLoading = document.getElementById("loginLoading");
+
+  async function doLogin(){
+    loginError.style.display = "none";
+    loginLoading.style.display = "block";
+
+    try{
+      const resp = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify({
+          email: loginEmail.value.trim(),
+          password: loginPassword.value
+        })
+      });
+
+      if (!resp.ok){
+        loginLoading.style.display = "none";
+        loginError.style.display = "block";
+        return;
+      }
+
+      const data = await resp.json();
+      if (!data.access_token){
+        loginLoading.style.display = "none";
+        loginError.style.display = "block";
+        return;
+      }
+
+      setToken(data.access_token);
+      hideLogin();
+
+      // Recarregar a página para o app.js buscar tudo já autenticado
+      location.reload();
+
+    }catch(e){
+      loginLoading.style.display = "none";
+      loginError.style.display = "block";
+    }
+  }
+
+  loginBtn.addEventListener("click", doLogin);
+  loginPassword.addEventListener("keydown", (e)=>{
+    if (e.key === "Enter") doLogin();
+  });
+  loginEmail.addEventListener("keydown", (e)=>{
+    if (e.key === "Enter") doLogin();
+  });
+
+  // =========================
+  // LOGOUT
+  // =========================
+  document.getElementById("btnLogout").addEventListener("click", ()=>{
+    clearToken();
+    showLogin();
+  });
+
+  // =========================
+  // BOOT
+  // =========================
+  (function initAuth(){
+    const token = getToken();
+    if (!token){
+      showLogin();
+    }else{
+      hideLogin();
+    }
+  })();
+</script>
 </body>
 </html>
