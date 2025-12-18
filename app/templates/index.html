@@ -59,6 +59,24 @@
       color: #fff;
       cursor: pointer;
     }
+
+    /* =========================
+       TRAVA DO PAINEL ENQUANTO NÃO LOGAR
+       ========================= */
+    body.auth-locked{
+      overflow: hidden;
+    }
+    body.auth-locked > *:not(#loginOverlay){
+      filter: blur(6px) brightness(0.65);
+      pointer-events: none;
+      user-select: none;
+    }
+    body.auth-locked .top-nav-right{
+      visibility: hidden;
+    }
+    .login-overlay{
+      background: rgba(0,0,0,.75);
+    }
   </style>
 </head>
 <body>
@@ -213,9 +231,11 @@ Americanas
   }
 
   function showLogin(){
+    document.body.classList.add("auth-locked");
     document.getElementById("loginOverlay").style.display = "flex";
   }
   function hideLogin(){
+    document.body.classList.remove("auth-locked");
     document.getElementById("loginOverlay").style.display = "none";
   }
 
@@ -255,6 +275,7 @@ Americanas
 
   async function doLogin(){
     loginError.style.display = "none";
+    loginError.textContent = "Email ou senha inválidos.";
     loginLoading.style.display = "block";
 
     try{
@@ -268,8 +289,10 @@ Americanas
       });
 
       if (!resp.ok){
+        const txt = await resp.text();
         loginLoading.style.display = "none";
         loginError.style.display = "block";
+        loginError.textContent = "Falha no login: " + txt;
         return;
       }
 
@@ -277,6 +300,7 @@ Americanas
       if (!data.access_token){
         loginLoading.style.display = "none";
         loginError.style.display = "block";
+        loginError.textContent = "Falha no login: token não retornado.";
         return;
       }
 
@@ -289,6 +313,7 @@ Americanas
     }catch(e){
       loginLoading.style.display = "none";
       loginError.style.display = "block";
+      loginError.textContent = "Falha no login: " + (e?.message || "erro desconhecido");
     }
   }
 
