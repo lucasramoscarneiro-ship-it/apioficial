@@ -42,7 +42,7 @@ async function api(url, options = {}) {
     if (window.apiFetch) {
         return await window.apiFetch(url, options);
     }
-    // fallback
+    // fallback (sem auth)
     return await fetch(url, options);
 }
 
@@ -58,6 +58,8 @@ let selectedConversationId = null;
 async function loadConversations() {
     try {
         const res = await api("/api/conversations");
+        if (!res.ok) return;
+
         conversations = await res.json();
         renderConversations(conversations);
     } catch (e) {
@@ -74,7 +76,7 @@ function renderConversations(list) {
 
     container.innerHTML = "";
 
-    list.forEach(conv => {
+    (list || []).forEach(conv => {
         const item = document.createElement("div");
         item.className = "conversation-item";
         item.dataset.id = conv.id;
@@ -101,6 +103,7 @@ function renderConversations(list) {
 // Selecionar conversa
 async function selectConversation(id, conv) {
     selectedConversationId = id;
+
     const nameEl = document.getElementById("chat-contact-name");
     const infoEl = document.getElementById("chat-contact-info");
 
@@ -114,6 +117,8 @@ async function selectConversation(id, conv) {
 async function loadMessages(conversationId) {
     try {
         const res = await api(`/api/conversations/${conversationId}/messages`);
+        if (!res.ok) return;
+
         const msgs = await res.json();
         renderMessages(msgs);
     } catch (e) {
@@ -128,9 +133,9 @@ function renderMessages(msgs) {
 
     container.innerHTML = "";
 
-    msgs.forEach(m => {
+    (msgs || []).forEach(m => {
         const row = document.createElement("div");
-        row.className = "message-row " + m.direction;
+        row.className = "message-row " + (m.direction || "");
 
         const bubble = document.createElement("div");
         bubble.className = "message-bubble";
@@ -138,8 +143,13 @@ function renderMessages(msgs) {
 
         const time = document.createElement("div");
         time.className = "message-time";
+
         const dt = new Date(m.timestamp);
-        time.textContent = dt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+        if (!isNaN(dt.getTime())) {
+            time.textContent = dt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+        } else {
+            time.textContent = "";
+        }
 
         bubble.appendChild(time);
         row.appendChild(bubble);
@@ -189,7 +199,7 @@ async function sendMessage() {
             return;
         }
 
-        msgInput.value = "";
+        if (msgInput) msgInput.value = "";
         await loadMessages(selectedConversationId);
         await loadConversations();
 
@@ -217,8 +227,6 @@ function setupSearch() {
 // Polling para atualizar conversas/mensagens
 function setupChatPolling() {
     setInterval(async () => {
-        // se não tiver token, não adianta ficar chamando
-        // (index.html controla o login)
         try {
             await loadConversations();
             if (selectedConversationId) {
@@ -252,20 +260,24 @@ function setupCampaignModeSwitch() {
         r.addEventListener("change", () => {
             const mode = getCampaignMode();
             if (mode === "text") {
-                textFields.style.display = "block";
-                templateFields.style.display = "none";
+                if (textFields) textFields.style.display = "block";
+                if (templateFields) templateFields.style.display = "none";
             } else {
-                textFields.style.display = "none";
-                templateFields.style.display = "block";
+                if (textFields) textFields.style.display = "none";
+                if (templateFields) templateFields.style.display = "block";
             }
         });
     });
 }
 
 async function startCampaign() {
-    const name = document.getElementById("campaign-name").value.trim();
-    const phoneNumberId = document.getElementById("campaign-phone-number-id").value.trim();
-    const numbersText = document.getElementById("campaign-numbers").value.trim();
+    const nameEl = document.getElementById("campaign-name");
+    const phoneEl = document.getElementById("campaign-phone-number-id");
+    const numbersEl = document.getElementById("campaign-numbers");
+
+    const name = (nameEl?.value || "").trim();
+    const phoneNumberId = (phoneEl?.value || "").trim();
+    const numbersText = (numbersEl?.value || "").trim();
 
     const mode = getCampaignMode();
 
@@ -286,19 +298,27 @@ async function startCampaign() {
     };
 
     if (mode === "text") {
-        const message = document.getElementById("campaign-message").value.trim();
+        const msgEl = document.getElementById("campaign-message");
+        const message = (msgEl?.value || "").trim();
+
         if (!message) {
             alert("Digite a mensagem de texto.");
             return;
         }
+
         body.message_text = message;
         body.template_name = null;
         body.template_language_code = null;
         body.template_body_params = null;
+
     } else {
-        const tplName = document.getElementById("campaign-template-name").value.trim();
-        const tplLang = document.getElementById("campaign-template-language").value.trim() || "pt_BR";
-        const tplParamsText = document.getElementById("campaign-template-params").value.trim();
+        const tplNameEl = document.getElementById("campaign-template-name");
+        const tplLangEl = document.getElementById("campaign-template-language");
+        const tplParamsEl = document.getElementById("campaign-template-params");
+
+        const tplName = (tplNameEl?.value || "").trim();
+        const tplLang = ((tplLangEl?.value || "").trim() || "pt_BR");
+        const tplParamsText = (tplParamsEl?.value || "").trim();
 
         if (!tplName) {
             alert("Digite o nome do template.");
@@ -344,17 +364,19 @@ async function loadCampaigns() {
 
     try {
         const res = await api("/api/campaigns");
+        if (!res.ok) return;
+
         const list = await res.json();
 
         container.innerHTML = "";
 
-        list.forEach(c => {
+        (list || []).forEach(c => {
             const div = document.createElement("div");
             div.className = "campaign-status-item";
 
             const created = c.created_at ? new Date(c.created_at).toLocaleString("pt-BR") : "";
-
             div.textContent = `${c.name} - ${c.status} | Enviados: ${c.sent}/${c.total} | Falhas: ${c.failed} | Criada em: ${created}`;
+
             container.appendChild(div);
         });
     } catch (e) {
@@ -391,8 +413,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     setupSearch();
     setupChatPolling();
 
-    // Só tenta carregar se estiver logado (token existe)
-    // Quem controla isso é o index.html.
     await loadConversations();
 
     // Campanhas

@@ -1,15 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 
-router = APIRouter()
+router = APIRouter(tags=["public"])
+templates = Jinja2Templates(directory="app/templates")
 
 @router.get("/politica", response_class=HTMLResponse)
-def politica_privacidade():
-    return """
-    <html>
-        <body>
-            <h1>Política de Privacidade</h1>
-            <p>Esta é a política de privacidade usada pela plataforma.</p>
-        </body>
-    </html>
-    """
+async def politica(request: Request):
+    # Página pública, sem auth, sem JS
+    return templates.TemplateResponse("politica.html", {"request": request})

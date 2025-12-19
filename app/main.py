@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, BackgroundTasks, Query, Depends
+from fastapi import FastAPI, Request, BackgroundTasks, Query, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -8,18 +8,21 @@ import asyncio
 from datetime import datetime
 import os
 
+from psycopg2.extras import RealDictCursor
+
 from .db import get_conn
 from .meta_client import send_whatsapp_text, send_whatsapp_template
 from .models import SendTextRequest, CampaignCreate
 from .politica import router as politica_router
 from .termos import router as termos_router
 
-# ✅ IMPORT CORRETO (RELATIVO) PARA NÃO DAR "No module named app"
+from .auth.auth_router import router as auth_router
 from .auth.dependencies import get_current_user
 
 
 app = FastAPI(title="Painel WhatsApp Oficial (API Oficial Meta)")
 
+app.include_router(auth_router)
 app.include_router(politica_router)
 app.include_router(termos_router)
 
@@ -45,12 +48,19 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "SEU_VERIFY_TOKEN_AQUI")
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    """
-    Página única da plataforma, com abas:
-    - Conversas
-    - Campanhas
-    """
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+# =======================
+# HELPERS
+# =======================
+
+def _dict_cursor(conn):
+    return conn.cursor(cursor_factory=RealDictCursor)
+
+def _get_user_id(user):
+    # get_current_user retorna dict
+    return str(user["id"])
 
 
 # =======================
@@ -60,15 +70,16 @@ async def index(request: Request):
 @app.get("/api/conversations")
 async def list_conversations(user=Depends(get_current_user)):
     """
-    Lista conversas salvas no banco, ordenadas pela última mensagem.
+    Lista somente conversas do usuário logado.
     """
     conn = get_conn()
-    cur = conn.cursor()
+    cur = _dict_cursor(conn)
     cur.execute("""
         SELECT id, wa_id, name, last_message_text, last_message_at, unread_count, created_at
         FROM conversations
+        WHERE user_id = %s
         ORDER BY last_message_at DESC NULLS LAST, created_at DESC
-    """)
+    """, (_get_user_id(user),))
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -78,10 +89,19 @@ async def list_conversations(user=Depends(get_current_user)):
 @app.get("/api/conversations/{conversation_id}/messages")
 async def get_conversation_messages(conversation_id: str, user=Depends(get_current_user)):
     """
-    Lista mensagens de uma conversa específica.
+    Lista mensagens de uma conversa específica, mas só se a conversa for do usuário.
     """
     conn = get_conn()
-    cur = conn.cursor()
+    cur = _dict_cursor(conn)
+
+    # garante dono
+    cur.execute("SELECT id FROM conversations WHERE id=%s AND user_id=%s", (conversation_id, _get_user_id(user)))
+    owner = cur.fetchone()
+    if not owner:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Conversa não encontrada")
+
     cur.execute("""
         SELECT id, conversation_id, direction, type, text, wa_id, status, meta_message_id, timestamp, created_at
         FROM messages
@@ -97,9 +117,24 @@ async def get_conversation_messages(conversation_id: str, user=Depends(get_curre
 @app.post("/api/messages/text")
 async def send_text_message(payload: SendTextRequest, user=Depends(get_current_user)):
     """
-    Envia mensagem de texto pela API oficial da Meta
-    e salva mensagem + conversa no banco (Supabase/Postgres).
+    Envia mensagem e salva no banco.
+    Só permite enviar em conversas do próprio usuário (pelo wa_id).
     """
+    user_id = _get_user_id(user)
+
+    conn = get_conn()
+    cur = _dict_cursor(conn)
+
+    # conversa precisa pertencer ao usuário
+    cur.execute("SELECT id FROM conversations WHERE wa_id=%s AND user_id=%s", (payload.to, user_id))
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=403, detail="Conversa não pertence ao usuário")
+
+    conversation_id = row["id"]
+
     # 1) Envia para a API da Meta
     meta_id = await send_whatsapp_text(
         to=payload.to,
@@ -107,24 +142,7 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
         phone_number_id=payload.phone_number_id
     )
 
-    conn = get_conn()
-    cur = conn.cursor()
-
-    # 2) Garante que a conversa existe
-    cur.execute("SELECT id FROM conversations WHERE wa_id = %s", (payload.to,))
-    row = cur.fetchone()
-
-    if row:
-        conversation_id = row["id"]
-    else:
-        cur.execute("""
-            INSERT INTO conversations (wa_id, name, last_message_text, last_message_at, unread_count)
-            VALUES (%s, %s, %s, NOW(), 0)
-            RETURNING id
-        """, (payload.to, payload.to, payload.message))
-        conversation_id = cur.fetchone()["id"]
-
-    # 3) Insere a mensagem enviada
+    # 2) Insere a mensagem enviada
     cur.execute("""
         INSERT INTO messages (
             conversation_id, direction, type, text, wa_id, status, meta_message_id, timestamp
@@ -132,7 +150,7 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
         VALUES (%s, 'outgoing', 'text', %s, %s, 'sent', %s, NOW())
     """, (conversation_id, payload.message, payload.to, meta_id))
 
-    # 4) Atualiza dados da conversa
+    # 3) Atualiza dados da conversa
     cur.execute("""
         UPDATE conversations
         SET last_message_text = %s,
@@ -145,11 +163,7 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
     cur.close()
     conn.close()
 
-    return {
-        "status": "sent",
-        "conversation_id": conversation_id,
-        "meta_message_id": meta_id,
-    }
+    return {"status": "sent", "conversation_id": conversation_id, "meta_message_id": meta_id}
 
 
 # =======================
@@ -162,9 +176,6 @@ async def verify_webhook(
     hub_challenge: str = Query(None, alias="hub.challenge"),
     hub_verify_token: str = Query(None, alias="hub.verify_token"),
 ):
-    """
-    Utilizado pela Meta para verificar o webhook.
-    """
     if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
         return HTMLResponse(content=hub_challenge, status_code=200)
     return HTMLResponse(content="Erro de verificação", status_code=403)
@@ -174,40 +185,69 @@ async def verify_webhook(
 async def receive_webhook(request: Request):
     """
     Recebe mensagens e status enviados pela Meta.
-    Aqui salvamos mensagens RECEBIDAS dos clientes no banco.
+    Salva mensagens RECEBIDAS no banco.
+    Atribui a conversa ao usuário correto via metadata.phone_number_id.
     """
     body = await request.json()
     entries = body.get("entry", [])
 
     conn = get_conn()
-    cur = conn.cursor()
+    cur = _dict_cursor(conn)
 
     for entry in entries:
         changes = entry.get("changes", [])
         for change in changes:
             value = change.get("value", {})
+
+            metadata = value.get("metadata", {}) or {}
+            phone_number_id = metadata.get("phone_number_id")
+
+            # Descobrir o usuário dono desse phone_number_id
+            user_id = None
+            if phone_number_id:
+                cur.execute("""
+                    SELECT id FROM users
+                    WHERE phone_number_id = %s AND is_active = true
+                    LIMIT 1
+                """, (str(phone_number_id),))
+                u = cur.fetchone()
+                if u:
+                    user_id = str(u["id"])
+
+            # Se não achar usuário, ainda salva (mas sem user_id) OU você pode ignorar.
+            # Aqui vamos salvar user_id NULL se não achar.
             messages = value.get("messages", [])
             for msg in messages:
                 from_wa = msg.get("from")  # telefone 5511...
                 text = msg.get("text", {}).get("body", "")
                 ts_str = msg.get("timestamp", "0")
+
                 try:
                     ts = int(ts_str)
                 except ValueError:
                     ts = int(datetime.utcnow().timestamp())
 
-                # 1) Garante a conversa
-                cur.execute("SELECT id FROM conversations WHERE wa_id = %s", (from_wa,))
+                # 1) Garante a conversa (sempre do mesmo user_id)
+                if user_id:
+                    cur.execute("""
+                        SELECT id FROM conversations
+                        WHERE wa_id = %s AND user_id = %s
+                    """, (from_wa, user_id))
+                else:
+                    cur.execute("""
+                        SELECT id FROM conversations
+                        WHERE wa_id = %s AND user_id IS NULL
+                    """, (from_wa,))
                 row = cur.fetchone()
 
                 if row:
                     conversation_id = row["id"]
                 else:
                     cur.execute("""
-                        INSERT INTO conversations (wa_id, name, last_message_text, last_message_at, unread_count)
-                        VALUES (%s, %s, %s, TO_TIMESTAMP(%s), 1)
+                        INSERT INTO conversations (user_id, wa_id, name, last_message_text, last_message_at, unread_count)
+                        VALUES (%s, %s, %s, %s, TO_TIMESTAMP(%s), 1)
                         RETURNING id
-                    """, (from_wa, from_wa, text, ts))
+                    """, (user_id, from_wa, from_wa, text, ts))
                     conversation_id = cur.fetchone()["id"]
 
                 # 2) Insere mensagem recebida
@@ -230,7 +270,6 @@ async def receive_webhook(request: Request):
     conn.commit()
     cur.close()
     conn.close()
-
     return {"status": "ok"}
 
 
@@ -241,10 +280,10 @@ async def receive_webhook(request: Request):
 @app.post("/api/campaigns")
 async def create_campaign(payload: CampaignCreate, background_tasks: BackgroundTasks, user=Depends(get_current_user)):
     """
-    Cria uma campanha de disparo em massa (texto livre ou template)
-    e dispara o envio em background.
+    Cria campanha do usuário logado e dispara em background.
     """
-    # Valida: ou template OU texto
+    user_id = _get_user_id(user)
+
     if not payload.template_name and not payload.message_text:
         return {"error": "Informe template_name OU message_text."}
 
@@ -252,11 +291,11 @@ async def create_campaign(payload: CampaignCreate, background_tasks: BackgroundT
         return {"error": "Use apenas template_name OU message_text, não os dois."}
 
     conn = get_conn()
-    cur = conn.cursor()
+    cur = _dict_cursor(conn)
 
-    # Cria campanha
     cur.execute("""
         INSERT INTO campaigns (
+            user_id,
             name,
             phone_number_id,
             template_name,
@@ -268,9 +307,10 @@ async def create_campaign(payload: CampaignCreate, background_tasks: BackgroundT
             failed,
             status
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, 0, 0, 'pending')
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 0, 'pending')
         RETURNING id
     """, (
+        user_id,
         payload.name,
         payload.phone_number_id,
         payload.template_name,
@@ -282,7 +322,6 @@ async def create_campaign(payload: CampaignCreate, background_tasks: BackgroundT
     row = cur.fetchone()
     campaign_id = row["id"]
 
-    # Cria items
     for num in payload.to_numbers:
         num_clean = num.strip()
         if not num_clean:
@@ -296,25 +335,24 @@ async def create_campaign(payload: CampaignCreate, background_tasks: BackgroundT
     cur.close()
     conn.close()
 
-    # dispara em background
     background_tasks.add_task(run_campaign, campaign_id)
-
     return {"status": "created", "campaign_id": campaign_id}
 
 
 @app.get("/api/campaigns")
 async def list_campaigns(user=Depends(get_current_user)):
     """
-    Lista campanhas.
+    Lista somente campanhas do usuário logado.
     """
     conn = get_conn()
-    cur = conn.cursor()
+    cur = _dict_cursor(conn)
     cur.execute("""
         SELECT id, name, phone_number_id, template_name, template_language_code,
                message_text, total, sent, failed, status, created_at
         FROM campaigns
+        WHERE user_id = %s
         ORDER BY created_at DESC
-    """)
+    """, (_get_user_id(user),))
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -324,10 +362,18 @@ async def list_campaigns(user=Depends(get_current_user)):
 @app.get("/api/campaigns/{campaign_id}/items")
 async def list_campaign_items(campaign_id: str, user=Depends(get_current_user)):
     """
-    Lista itens (números) de uma campanha.
+    Lista itens da campanha se ela for do usuário.
     """
     conn = get_conn()
-    cur = conn.cursor()
+    cur = _dict_cursor(conn)
+
+    cur.execute("SELECT id FROM campaigns WHERE id=%s AND user_id=%s", (campaign_id, _get_user_id(user)))
+    owner = cur.fetchone()
+    if not owner:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Campanha não encontrada")
+
     cur.execute("""
         SELECT id, campaign_id, "to", status, error_message, created_at
         FROM campaign_items
@@ -345,9 +391,8 @@ async def run_campaign(campaign_id: str):
     Envia as mensagens de uma campanha em background.
     """
     conn = get_conn()
-    cur = conn.cursor()
+    cur = _dict_cursor(conn)
 
-    # Busca campanha
     cur.execute("SELECT * FROM campaigns WHERE id = %s", (campaign_id,))
     camp = cur.fetchone()
     if not camp:
@@ -355,21 +400,15 @@ async def run_campaign(campaign_id: str):
         conn.close()
         return
 
-    # Atualiza status para running
-    cur.execute("""
-        UPDATE campaigns
-        SET status = 'running'
-        WHERE id = %s
-    """, (campaign_id,))
+    cur.execute("UPDATE campaigns SET status='running' WHERE id=%s", (campaign_id,))
     conn.commit()
 
-    template_name = camp["template_name"]
-    template_language_code = camp["template_language_code"] or "pt_BR"
-    template_body_params = camp["template_body_params"]
-    message_text = camp["message_text"]
-    phone_number_id = camp["phone_number_id"]
+    template_name = camp.get("template_name")
+    template_language_code = camp.get("template_language_code") or "pt_BR"
+    template_body_params = camp.get("template_body_params")
+    message_text = camp.get("message_text")
+    phone_number_id = camp.get("phone_number_id")
 
-    # Busca itens pendentes
     cur.execute("""
         SELECT id, "to", status
         FROM campaign_items
@@ -379,9 +418,8 @@ async def run_campaign(campaign_id: str):
     items = cur.fetchall()
 
     DELAY_SECONDS = 0.2
-
-    sent = camp["sent"]
-    failed = camp["failed"]
+    sent = camp.get("sent", 0)
+    failed = camp.get("failed", 0)
 
     for item in items:
         item_id = item["id"]
@@ -427,11 +465,7 @@ async def run_campaign(campaign_id: str):
         conn.commit()
         await asyncio.sleep(DELAY_SECONDS)
 
-    cur.execute("""
-        UPDATE campaigns
-        SET status = 'finished'
-        WHERE id = %s
-    """, (campaign_id,))
+    cur.execute("UPDATE campaigns SET status='finished' WHERE id=%s", (campaign_id,))
     conn.commit()
 
     cur.close()
