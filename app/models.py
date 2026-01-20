@@ -1,11 +1,13 @@
 from pydantic import BaseModel
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Literal
 from enum import Enum
 from datetime import datetime
 import uuid
 
 # =======================
 # "BANCO" EM MEMÓRIA
+# (mantive porque já existe no seu projeto; mesmo que você use Postgres,
+#  esses modelos ainda servem para validação / tipagem)
 # =======================
 
 conversations_db: Dict[str, "Conversation"] = {}
@@ -14,14 +16,13 @@ messages_db: Dict[str, "Message"] = {}
 campaigns_db: Dict[str, "Campaign"] = {}
 campaign_items_db: Dict[str, "CampaignItem"] = {}
 
-
 # =======================
 # MODELOS DE CHAT
 # =======================
 
 class Conversation(BaseModel):
     id: str
-    wa_id: str              # telefone no formato Meta (55119...)
+    wa_id: str              # telefone (55119...)
     name: Optional[str] = None
     last_message_text: Optional[str] = None
     last_message_at: Optional[datetime] = None
@@ -40,7 +41,7 @@ class Message(BaseModel):
     timestamp: datetime
 
     @classmethod
-    def create_outgoing(cls, conversation_id: str, text: str, meta_message_id: str):
+    def create_outgoing(cls, conversation_id: str, text: str, meta_message_id: str | None = None):
         return cls(
             id=str(uuid.uuid4()),
             conversation_id=conversation_id,
@@ -54,7 +55,6 @@ class Message(BaseModel):
 
     @classmethod
     def create_incoming(cls, conversation_id: str, text: str, wa_id: str, timestamp: int):
-        # Meta manda timestamp em segundos → convertemos para datetime
         return cls(
             id=str(uuid.uuid4()),
             conversation_id=conversation_id,
@@ -67,10 +67,21 @@ class Message(BaseModel):
         )
 
 
+# =======================
+# REQUEST DE ENVIO (CHAT)
+# - Evolution NÃO usa phone_number_id
+# - Meta usa phone_number_id
+# =======================
+
 class SendTextRequest(BaseModel):
-    phone_number_id: str    # PHONE_NUMBER_ID da Meta
-    to: str                 # telefone destino (55119...)
+    to: str                 # telefone destino (55119... ou 55119...@s.whatsapp.net)
     message: str            # texto da mensagem
+
+    # provider padrão = evolution (não exige phone_number_id)
+    provider: Literal["evolution", "meta"] = "evolution"
+
+    # só é necessário se provider="meta"
+    phone_number_id: Optional[str] = None
 
 
 def create_or_get_conversation(wa_id: str) -> Conversation:
@@ -96,6 +107,7 @@ def create_or_get_conversation(wa_id: str) -> Conversation:
 
 # =======================
 # MODELOS DE CAMPANHA
+# (Campanha Meta continua usando phone_number_id, ok)
 # =======================
 
 class CampaignStatus(str, Enum):

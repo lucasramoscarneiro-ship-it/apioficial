@@ -122,48 +122,97 @@ async def get_conversation_messages(conversation_id: str, user=Depends(get_curre
 @app.post("/api/messages/text")
 async def send_text_message(payload: SendTextRequest, user=Depends(get_current_user)):
     """
-    Envia mensagem via Evolution e salva no banco.
-    Só permite enviar em conversas do próprio usuário (pelo wa_id).
+    Envia mensagem pelo provider:
+    - evolution (padrão): NÃO usa phone_number_id
+    - meta: usa phone_number_id (se você quiser manter a opção)
+
+    Salva no banco e atualiza a conversa.
     """
     user_id = _get_user_id(user)
+
+    # Normaliza o "to" (remove @s.whatsapp.net se vier)
+    to_wa = (payload.to or "").strip()
+    if "@s.whatsapp.net" in to_wa:
+        to_wa = to_wa.split("@")[0]
+
+    if not to_wa:
+        raise HTTPException(status_code=400, detail="Campo 'to' inválido")
 
     conn = get_conn()
     cur = _dict_cursor(conn)
 
     # conversa precisa pertencer ao usuário
-    cur.execute("SELECT id FROM conversations WHERE wa_id=%s AND user_id=%s", (payload.to, user_id))
+    # (e se por algum motivo veio user_id NULL do webhook, permitimos também)
+    cur.execute("""
+        SELECT id
+        FROM conversations
+        WHERE wa_id = %s AND (user_id = %s OR user_id IS NULL)
+        LIMIT 1
+    """, (to_wa, user_id))
     row = cur.fetchone()
+
     if not row:
         cur.close()
         conn.close()
-        raise HTTPException(status_code=403, detail="Conversa não pertence ao usuário")
+        raise HTTPException(status_code=403, detail="Conversa não encontrada para este usuário")
 
     conversation_id = row["id"]
 
-    # instância Evolution (por enquanto fixa; depois a gente deixa por usuário)
-    instance_name = os.getenv("EVOLUTION_INSTANCE_NAME", "lucas2")
+    provider = getattr(payload, "provider", "evolution") or "evolution"
 
-    # envia via Evolution
+    # =========================
+    # ENVIO (EVOLUTION OU META)
+    # =========================
+    meta_id = None
+    resp = None
+
     try:
-        resp = await send_evolution_text(
-            instance_name=instance_name,
-            to=payload.to,
-            text=payload.message
-        )
+        if provider == "meta":
+            # Se você realmente for usar Meta no chat, precisa do phone_number_id
+            phone_number_id = getattr(payload, "phone_number_id", None)
+            if not phone_number_id:
+                raise HTTPException(status_code=400, detail="phone_number_id é obrigatório para provider='meta'")
+
+            # envia via META (se quiser manter essa opção)
+            resp = await send_whatsapp_text(
+                to=to_wa,
+                phone_number_id=phone_number_id,
+                text=payload.message
+            )
+
+            # tenta extrair id retornado pela meta
+            if isinstance(resp, dict):
+                meta_id = resp.get("messages", [{}])[0].get("id")
+
+        else:
+            # EVOLUTION (padrão)
+            instance_name = os.getenv("EVOLUTION_INSTANCE_NAME", "lucas2")
+
+            resp = await send_evolution_text(
+                instance_name=instance_name,
+                to=to_wa,
+                text=payload.message
+            )
+
+            # tenta pegar algum id retornado
+            if isinstance(resp, dict):
+                meta_id = (
+                    resp.get("key", "")
+                    or resp.get("messageId", "")
+                    or resp.get("id", "")
+                    or resp.get("msgId", "")
+                    or None
+                )
+
+    except HTTPException:
+        # re-sobe HTTPException sem mascarar
+        cur.close()
+        conn.close()
+        raise
     except Exception as e:
         cur.close()
         conn.close()
-        raise HTTPException(status_code=500, detail=f"Falha ao enviar (Evolution): {str(e)}")
-
-    # tenta pegar algum id retornado
-    meta_id = ""
-    if isinstance(resp, dict):
-        meta_id = (
-            resp.get("key", "")
-            or resp.get("messageId", "")
-            or resp.get("id", "")
-            or resp.get("msgId", "")
-        )
+        raise HTTPException(status_code=500, detail=f"Falha ao enviar ({provider}): {str(e)}")
 
     now_ts = int(datetime.utcnow().timestamp())
 
@@ -174,7 +223,7 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
         )
         VALUES (%s, 'outgoing', 'text', %s, %s, 'sent', %s, TO_TIMESTAMP(%s))
         RETURNING id
-    """, (conversation_id, payload.message, payload.to, meta_id or None, now_ts))
+    """, (conversation_id, payload.message, to_wa, meta_id, now_ts))
     msg_row = cur.fetchone()
 
     # atualiza conversa
@@ -193,9 +242,9 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
         "status": "sent",
         "conversation_id": conversation_id,
         "message_id": msg_row["id"],
-        "provider": "evolution",
+        "provider": provider,
         "provider_message_id": meta_id,
-        "evolution_response": resp
+        "provider_response": resp
     }
 
 
