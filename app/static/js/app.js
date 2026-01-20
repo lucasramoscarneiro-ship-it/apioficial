@@ -1,3 +1,5 @@
+console.log("APP.JS CARREGADO - EVOLUTION ONLY - v20260120_999");
+
 // =======================
 // TABS (ABAS)
 // =======================
