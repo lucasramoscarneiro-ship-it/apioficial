@@ -304,6 +304,10 @@ def _extract_timestamp(msg: dict) -> int:
 
 @app.post("/webhook/evolution")
 async def receive_evolution_webhook(request: Request):
+    print("=== EVOLUTION WEBHOOK HIT ===")
+    print("keys:", list(body.keys()))
+    print("event:", body.get("event"))
+
     """
     Recebe eventos da Evolution (ex.: messages.upsert) e salva no banco como mensagem recebida.
     - NÃO exige auth (webhook externo).
