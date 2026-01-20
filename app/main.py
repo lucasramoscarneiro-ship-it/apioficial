@@ -217,66 +217,34 @@ def _extract_evolution_instance_name(body: dict) -> str | None:
 
 
 def _extract_evolution_message(body: dict) -> dict | None:
-    """
-    Evolution dispara eventos (ex: messages.upsert). O payload pode variar por versão/config.
-    Aqui tentamos extrair uma mensagem "principal" de forma resiliente.
-    """
-    data = body.get("data") or body.get("response") or body.get("message") or body
+    data = body.get("data")
+    if not isinstance(data, dict):
+        return None
 
-    # alguns payloads vêm com array de mensagens
-    if isinstance(data, dict):
-        for key in ["messages", "message", "messagesUpsert", "messages_upsert", "upsert", "messagesUpsertData"]:
-            if key in data:
-                data = data[key]
-                break
+    # Evolution padrão
+    # data = { "messages": [ { ... } ] }
+    if "messages" in data and isinstance(data["messages"], list):
+        return data["messages"][0]
 
-    # se virou lista, pega a primeira
-    if isinstance(data, list) and len(data) > 0:
-        # às vezes vem objeto { messages: [...] }
-        first = data[0]
-        if isinstance(first, dict) and "messages" in first and isinstance(first["messages"], list) and first["messages"]:
-            return first["messages"][0]
-        return first if isinstance(first, dict) else None
+    # fallback
+    return data
 
-    return data if isinstance(data, dict) else None
 
 
 def _extract_from_and_text(msg: dict) -> tuple[str | None, str | None]:
-    """
-    Tenta extrair:
-    - from_wa: número/remoteJid (identificador de quem enviou)
-    - text: conteúdo da mensagem
-    """
-    # origem
     from_wa = (
         msg.get("from")
-        or msg.get("remoteJid")
         or msg.get("key", {}).get("remoteJid")
-        or msg.get("key", {}).get("participant")
-        or msg.get("participant")
-        or None
+        or msg.get("remoteJid")
     )
 
-    # texto (vários formatos possíveis)
     text = None
-    if "text" in msg and isinstance(msg["text"], str):
-        text = msg["text"]
 
-    if text is None:
-        text = (
-            msg.get("message", {}).get("conversation")
-            or msg.get("message", {}).get("extendedTextMessage", {}).get("text")
-            or msg.get("message", {}).get("text")
-            or msg.get("textMessage", {}).get("text")
-            or msg.get("content")
-            or None
-        )
-
-    # em alguns casos vem como dict { text: { body: "..." } }
-    if text is None:
-        body = msg.get("text", {})
-        if isinstance(body, dict):
-            text = body.get("body")
+    message = msg.get("message", {})
+    if "conversation" in message:
+        text = message["conversation"]
+    elif "extendedTextMessage" in message:
+        text = message["extendedTextMessage"].get("text")
 
     return from_wa, text
 
@@ -307,6 +275,10 @@ async def receive_evolution_webhook(request: Request):
     # sempre define body antes de usar
     try:
         body = await request.json()
+        print("=== EVOLUTION WEBHOOK HIT ===")
+        print("event:", body.get("event"))
+        print("EVOLUTION SERVER_URL:", body.get("server_url"))
+
     except Exception as e:
         print("❌ ERRO lendo JSON do webhook:", str(e))
         return {"status": "ok", "note": "invalid-json"}
