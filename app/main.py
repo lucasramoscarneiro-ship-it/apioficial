@@ -24,7 +24,7 @@ from .webhook import router as webhook_router
 
 
 
-app = FastAPI(title="Painel WhatsApp Oficial (API Oficial Meta)")
+app = FastAPI(title="Painel WhatsApp LRC")
 
 app.include_router(auth_router)
 app.include_router(politica_router)
@@ -304,28 +304,30 @@ def _extract_timestamp(msg: dict) -> int:
 
 @app.post("/webhook/evolution")
 async def receive_evolution_webhook(request: Request):
+    # sempre define body antes de usar
+    try:
+        body = await request.json()
+    except Exception as e:
+        print("❌ ERRO lendo JSON do webhook:", str(e))
+        return {"status": "ok", "note": "invalid-json"}
+
     print("=== EVOLUTION WEBHOOK HIT ===")
     print("keys:", list(body.keys()))
     print("event:", body.get("event"))
-
-    """
-    Recebe eventos da Evolution (ex.: messages.upsert) e salva no banco como mensagem recebida.
-    - NÃO exige auth (webhook externo).
-    - Tenta identificar o usuário pelo nome da instância (se você tiver isso salvo no users).
-    """
-    body = await request.json()
 
     # 1) Pega instância e mensagem
     instance_name = _extract_evolution_instance_name(body)
     msg = _extract_evolution_message(body)
 
-    # Se não tiver mensagem, só confirma OK (evita ficar dando erro e a Evolution re-tentar sem parar)
     if not msg or not isinstance(msg, dict):
         return {"status": "ok", "note": "no-message"}
 
     from_wa, text = _extract_from_and_text(msg)
 
-    # sem remetente ou sem texto => não salva como "incoming text"
+    # normaliza wa_id
+    if from_wa and "@" in from_wa:
+        from_wa = from_wa.split("@")[0]
+
     if not from_wa or not text:
         return {"status": "ok", "note": "no-text-or-from"}
 
@@ -334,8 +336,7 @@ async def receive_evolution_webhook(request: Request):
     conn = get_conn()
     cur = _dict_cursor(conn)
 
-    # 2) Descobrir o usuário dono da instância (recomendado para multi-usuário)
-    #    Se você ainda não tem essa coluna/tabela, ele salva user_id NULL (igual seu webhook da Meta faz quando não acha).
+    # 2) Descobrir user pelo nome da instância (se existir)
     user_id = None
     if instance_name:
         try:
@@ -348,10 +349,9 @@ async def receive_evolution_webhook(request: Request):
             if u:
                 user_id = str(u["id"])
         except Exception:
-            # se a coluna não existir ainda, não quebra o webhook
             user_id = None
 
-    # 3) Garante conversa (por wa_id + user_id)
+    # 3) Garante conversa
     if user_id:
         cur.execute("""
             SELECT id FROM conversations
@@ -374,7 +374,7 @@ async def receive_evolution_webhook(request: Request):
         """, (user_id, from_wa, from_wa, text, ts))
         conversation_id = cur.fetchone()["id"]
 
-    # 4) Insere mensagem recebida
+    # 4) Insere mensagem
     cur.execute("""
         INSERT INTO messages (
             conversation_id, direction, type, text, wa_id, status, meta_message_id, timestamp
@@ -382,10 +382,10 @@ async def receive_evolution_webhook(request: Request):
         VALUES (%s, 'incoming', 'text', %s, %s, 'received', NULL, TO_TIMESTAMP(%s))
     """, (conversation_id, text, from_wa, ts))
 
-    # 5) Atualiza conversa
+    # 5) Atualiza conversa (SQL correto)
     cur.execute("""
         UPDATE conversations
-            last_message_text = %s,
+        SET last_message_text = %s,
             last_message_at = TO_TIMESTAMP(%s),
             unread_count = unread_count + 1
         WHERE id = %s
@@ -396,6 +396,7 @@ async def receive_evolution_webhook(request: Request):
     conn.close()
 
     return {"status": "ok"}
+
 
 
 
