@@ -63,9 +63,7 @@ async function loadConversations() {
         conversations = await res.json();
         renderConversations(conversations);
     } catch (e) {
-        // se estiver deslogado, apiFetch já mostrou login
-        // evita estourar erro no console/polling
-        // console.warn("loadConversations:", e);
+        // ignora
     }
 }
 
@@ -122,7 +120,7 @@ async function loadMessages(conversationId) {
         const msgs = await res.json();
         renderMessages(msgs);
     } catch (e) {
-        // console.warn("loadMessages:", e);
+        // ignora
     }
 }
 
@@ -159,7 +157,7 @@ function renderMessages(msgs) {
     container.scrollTop = container.scrollHeight;
 }
 
-// Envia mensagem
+// Envia mensagem (EVOLUTION: NÃO EXISTE PHONE_NUMBER_ID)
 async function sendMessage() {
     if (!selectedConversationId) {
         alert("Selecione uma conversa primeiro.");
@@ -167,13 +165,10 @@ async function sendMessage() {
     }
 
     const msgInput = document.getElementById("message-input");
-    const phoneNumberIdInput = document.getElementById("phone-number-id-input");
-
     const text = (msgInput?.value || "").trim();
-    const phoneNumberId = (phoneNumberIdInput?.value || "").trim();
 
-    if (!text || !phoneNumberId) {
-        alert("Digite a mensagem e o PHONE_NUMBER_ID.");
+    if (!text) {
+        alert("Digite a mensagem.");
         return;
     }
 
@@ -181,7 +176,6 @@ async function sendMessage() {
     if (!conv) return;
 
     const body = {
-        phone_number_id: phoneNumberId,
         to: conv.wa_id,
         message: text
     };
@@ -204,8 +198,7 @@ async function sendMessage() {
         await loadConversations();
 
     } catch (e) {
-        // apiFetch já pode ter mostrado login em caso de 401
-        // console.warn("sendMessage:", e);
+        // ignora
     }
 }
 
@@ -281,6 +274,8 @@ async function startCampaign() {
 
     const mode = getCampaignMode();
 
+    // Obs: Campanha pode usar Meta (template) ou Evolution (texto).
+    // Por enquanto mantive igual seu comportamento atual.
     if (!name || !phoneNumberId || !numbersText) {
         alert("Preencha nome, PHONE_NUMBER_ID e os números.");
         return;
@@ -354,7 +349,7 @@ async function startCampaign() {
 
         await loadCampaigns();
     } catch (e) {
-        // console.warn("startCampaign:", e);
+        // ignora
     }
 }
 
@@ -380,7 +375,7 @@ async function loadCampaigns() {
             container.appendChild(div);
         });
     } catch (e) {
-        // console.warn("loadCampaigns:", e);
+        // ignora
     }
 }
 
