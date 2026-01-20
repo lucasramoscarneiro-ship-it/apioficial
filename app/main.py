@@ -19,12 +19,17 @@ from .termos import router as termos_router
 from .auth.auth_router import router as auth_router
 from .auth.dependencies import get_current_user
 
+from .evolution_client import send_evolution_text
+from .webhook import router as webhook_router
+
+
 
 app = FastAPI(title="Painel WhatsApp Oficial (API Oficial Meta)")
 
 app.include_router(auth_router)
 app.include_router(politica_router)
 app.include_router(termos_router)
+app.include_router(webhook_router)
 
 # arquivos estáticos (CSS/JS) e templates
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -117,7 +122,7 @@ async def get_conversation_messages(conversation_id: str, user=Depends(get_curre
 @app.post("/api/messages/text")
 async def send_text_message(payload: SendTextRequest, user=Depends(get_current_user)):
     """
-    Envia mensagem e salva no banco.
+    Envia mensagem via Evolution e salva no banco.
     Só permite enviar em conversas do próprio usuário (pelo wa_id).
     """
     user_id = _get_user_id(user)
@@ -135,35 +140,260 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
 
     conversation_id = row["id"]
 
-    # 1) Envia para a API da Meta
-    meta_id = await send_whatsapp_text(
-        to=payload.to,
-        text=payload.message,
-        phone_number_id=payload.phone_number_id
-    )
+    # instância Evolution (por enquanto fixa; depois a gente deixa por usuário)
+    instance_name = os.getenv("EVOLUTION_INSTANCE_NAME", "lucas2")
 
-    # 2) Insere a mensagem enviada
+    # envia via Evolution
+    try:
+        resp = await send_evolution_text(
+            instance_name=instance_name,
+            to=payload.to,
+            text=payload.message
+        )
+    except Exception as e:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Falha ao enviar (Evolution): {str(e)}")
+
+    # tenta pegar algum id retornado
+    meta_id = ""
+    if isinstance(resp, dict):
+        meta_id = (
+            resp.get("key", "")
+            or resp.get("messageId", "")
+            or resp.get("id", "")
+            or resp.get("msgId", "")
+        )
+
+    now_ts = int(datetime.utcnow().timestamp())
+
+    # salva mensagem enviada (outgoing)
     cur.execute("""
         INSERT INTO messages (
             conversation_id, direction, type, text, wa_id, status, meta_message_id, timestamp
         )
-        VALUES (%s, 'outgoing', 'text', %s, %s, 'sent', %s, NOW())
-    """, (conversation_id, payload.message, payload.to, meta_id))
+        VALUES (%s, 'outgoing', 'text', %s, %s, 'sent', %s, TO_TIMESTAMP(%s))
+        RETURNING id
+    """, (conversation_id, payload.message, payload.to, meta_id or None, now_ts))
+    msg_row = cur.fetchone()
 
-    # 3) Atualiza dados da conversa
+    # atualiza conversa
     cur.execute("""
         UPDATE conversations
         SET last_message_text = %s,
-            last_message_at = NOW(),
-            unread_count = 0
+            last_message_at = TO_TIMESTAMP(%s)
         WHERE id = %s
-    """, (payload.message, conversation_id))
+    """, (payload.message, now_ts, conversation_id))
 
     conn.commit()
     cur.close()
     conn.close()
 
-    return {"status": "sent", "conversation_id": conversation_id, "meta_message_id": meta_id}
+    return {
+        "status": "sent",
+        "conversation_id": conversation_id,
+        "message_id": msg_row["id"],
+        "provider": "evolution",
+        "provider_message_id": meta_id,
+        "evolution_response": resp
+    }
+
+
+# =======================
+# WEBHOOK EVOLUTION - NÃO PROTEGIDO
+# =======================
+
+def _extract_evolution_instance_name(body: dict) -> str | None:
+    # tenta achar o nome da instância em vários formatos
+    return (
+        body.get("instance")
+        or body.get("instanceName")
+        or body.get("instance_name")
+        or body.get("data", {}).get("instance")
+        or body.get("data", {}).get("instanceName")
+        or body.get("event", {}).get("instance")
+        or None
+    )
+
+
+def _extract_evolution_message(body: dict) -> dict | None:
+    """
+    Evolution dispara eventos (ex: messages.upsert). O payload pode variar por versão/config.
+    Aqui tentamos extrair uma mensagem "principal" de forma resiliente.
+    """
+    data = body.get("data") or body.get("response") or body.get("message") or body
+
+    # alguns payloads vêm com array de mensagens
+    if isinstance(data, dict):
+        for key in ["messages", "message", "messagesUpsert", "messages_upsert", "upsert", "messagesUpsertData"]:
+            if key in data:
+                data = data[key]
+                break
+
+    # se virou lista, pega a primeira
+    if isinstance(data, list) and len(data) > 0:
+        # às vezes vem objeto { messages: [...] }
+        first = data[0]
+        if isinstance(first, dict) and "messages" in first and isinstance(first["messages"], list) and first["messages"]:
+            return first["messages"][0]
+        return first if isinstance(first, dict) else None
+
+    return data if isinstance(data, dict) else None
+
+
+def _extract_from_and_text(msg: dict) -> tuple[str | None, str | None]:
+    """
+    Tenta extrair:
+    - from_wa: número/remoteJid (identificador de quem enviou)
+    - text: conteúdo da mensagem
+    """
+    # origem
+    from_wa = (
+        msg.get("from")
+        or msg.get("remoteJid")
+        or msg.get("key", {}).get("remoteJid")
+        or msg.get("key", {}).get("participant")
+        or msg.get("participant")
+        or None
+    )
+
+    # texto (vários formatos possíveis)
+    text = None
+    if "text" in msg and isinstance(msg["text"], str):
+        text = msg["text"]
+
+    if text is None:
+        text = (
+            msg.get("message", {}).get("conversation")
+            or msg.get("message", {}).get("extendedTextMessage", {}).get("text")
+            or msg.get("message", {}).get("text")
+            or msg.get("textMessage", {}).get("text")
+            or msg.get("content")
+            or None
+        )
+
+    # em alguns casos vem como dict { text: { body: "..." } }
+    if text is None:
+        body = msg.get("text", {})
+        if isinstance(body, dict):
+            text = body.get("body")
+
+    return from_wa, text
+
+
+def _extract_timestamp(msg: dict) -> int:
+    # tenta extrair timestamp; fallback agora
+    ts = (
+        msg.get("timestamp")
+        or msg.get("messageTimestamp")
+        or msg.get("messageTimestampMs")
+        or msg.get("time")
+        or None
+    )
+    try:
+        if ts is None:
+            return int(datetime.utcnow().timestamp())
+        # se vier em ms
+        ts_int = int(ts)
+        if ts_int > 10_000_000_000:  # > ~2286-11 em segundos -> provavelmente ms
+            ts_int = ts_int // 1000
+        return ts_int
+    except Exception:
+        return int(datetime.utcnow().timestamp())
+
+
+@app.post("/webhook/evolution")
+async def receive_evolution_webhook(request: Request):
+    """
+    Recebe eventos da Evolution (ex.: messages.upsert) e salva no banco como mensagem recebida.
+    - NÃO exige auth (webhook externo).
+    - Tenta identificar o usuário pelo nome da instância (se você tiver isso salvo no users).
+    """
+    body = await request.json()
+
+    # 1) Pega instância e mensagem
+    instance_name = _extract_evolution_instance_name(body)
+    msg = _extract_evolution_message(body)
+
+    # Se não tiver mensagem, só confirma OK (evita ficar dando erro e a Evolution re-tentar sem parar)
+    if not msg or not isinstance(msg, dict):
+        return {"status": "ok", "note": "no-message"}
+
+    from_wa, text = _extract_from_and_text(msg)
+
+    # sem remetente ou sem texto => não salva como "incoming text"
+    if not from_wa or not text:
+        return {"status": "ok", "note": "no-text-or-from"}
+
+    ts = _extract_timestamp(msg)
+
+    conn = get_conn()
+    cur = _dict_cursor(conn)
+
+    # 2) Descobrir o usuário dono da instância (recomendado para multi-usuário)
+    #    Se você ainda não tem essa coluna/tabela, ele salva user_id NULL (igual seu webhook da Meta faz quando não acha).
+    user_id = None
+    if instance_name:
+        try:
+            cur.execute("""
+                SELECT id FROM users
+                WHERE evolution_instance_name = %s AND is_active = true
+                LIMIT 1
+            """, (str(instance_name),))
+            u = cur.fetchone()
+            if u:
+                user_id = str(u["id"])
+        except Exception:
+            # se a coluna não existir ainda, não quebra o webhook
+            user_id = None
+
+    # 3) Garante conversa (por wa_id + user_id)
+    if user_id:
+        cur.execute("""
+            SELECT id FROM conversations
+            WHERE wa_id = %s AND user_id = %s
+        """, (from_wa, user_id))
+    else:
+        cur.execute("""
+            SELECT id FROM conversations
+            WHERE wa_id = %s AND user_id IS NULL
+        """, (from_wa,))
+    row = cur.fetchone()
+
+    if row:
+        conversation_id = row["id"]
+    else:
+        cur.execute("""
+            INSERT INTO conversations (user_id, wa_id, name, last_message_text, last_message_at, unread_count)
+            VALUES (%s, %s, %s, %s, TO_TIMESTAMP(%s), 1)
+            RETURNING id
+        """, (user_id, from_wa, from_wa, text, ts))
+        conversation_id = cur.fetchone()["id"]
+
+    # 4) Insere mensagem recebida
+    cur.execute("""
+        INSERT INTO messages (
+            conversation_id, direction, type, text, wa_id, status, meta_message_id, timestamp
+        )
+        VALUES (%s, 'incoming', 'text', %s, %s, 'received', NULL, TO_TIMESTAMP(%s))
+    """, (conversation_id, text, from_wa, ts))
+
+    # 5) Atualiza conversa
+    cur.execute("""
+        UPDATE conversations
+            last_message_text = %s,
+            last_message_at = TO_TIMESTAMP(%s),
+            unread_count = unread_count + 1
+        WHERE id = %s
+    """, (text, ts, conversation_id))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {"status": "ok"}
+
+
 
 
 # =======================
@@ -435,11 +665,13 @@ async def run_campaign(campaign_id: str):
                     body_params=template_body_params,
                 )
             else:
-                await send_whatsapp_text(
+                instance_name = os.getenv("EVOLUTION_INSTANCE_NAME", "lucas2")
+                await send_evolution_text(
+                    instance_name=instance_name,
                     to=to_number,
                     text=message_text,
-                    phone_number_id=phone_number_id,
                 )
+
 
             cur.execute("""
                 UPDATE campaign_items
