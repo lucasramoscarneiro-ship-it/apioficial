@@ -11,17 +11,15 @@ import os
 from psycopg2.extras import RealDictCursor
 
 from .db import get_conn
-from .meta_client import send_whatsapp_text, send_whatsapp_template
+
+# ✅ SOMENTE EVOLUTION
 from .models import SendTextRequest, CampaignCreate
 from .politica import router as politica_router
 from .termos import router as termos_router
-
 from .auth.auth_router import router as auth_router
 from .auth.dependencies import get_current_user
-
 from .evolution_client import send_evolution_text
 from .webhook import router as webhook_router
-
 
 
 app = FastAPI(title="Painel WhatsApp LRC")
@@ -43,8 +41,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "SEU_VERIFY_TOKEN_AQUI")
 
 
 # =======================
@@ -122,10 +118,7 @@ async def get_conversation_messages(conversation_id: str, user=Depends(get_curre
 @app.post("/api/messages/text")
 async def send_text_message(payload: SendTextRequest, user=Depends(get_current_user)):
     """
-    Envia mensagem pelo provider:
-    - evolution (padrão): NÃO usa phone_number_id
-    - meta: usa phone_number_id (se você quiser manter a opção)
-
+    Envia mensagem SOMENTE via Evolution.
     Salva no banco e atualiza a conversa.
     """
     user_id = _get_user_id(user)
@@ -158,61 +151,36 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
 
     conversation_id = row["id"]
 
-    provider = getattr(payload, "provider", "evolution") or "evolution"
-
     # =========================
-    # ENVIO (EVOLUTION OU META)
+    # ENVIO (EVOLUTION)
     # =========================
-    meta_id = None
+    provider = "evolution"
+    provider_message_id = None
     resp = None
 
     try:
-        if provider == "meta":
-            # Se você realmente for usar Meta no chat, precisa do phone_number_id
-            phone_number_id = getattr(payload, "phone_number_id", None)
-            if not phone_number_id:
-                raise HTTPException(status_code=400, detail="phone_number_id é obrigatório para provider='meta'")
+        instance_name = os.getenv("EVOLUTION_INSTANCE_NAME", "lucas2")
 
-            # envia via META (se quiser manter essa opção)
-            resp = await send_whatsapp_text(
-                to=to_wa,
-                phone_number_id=phone_number_id,
-                text=payload.message
+        resp = await send_evolution_text(
+            instance_name=instance_name,
+            to=to_wa,
+            text=payload.message
+        )
+
+        # tenta pegar algum id retornado
+        if isinstance(resp, dict):
+            provider_message_id = (
+                resp.get("key", "")
+                or resp.get("messageId", "")
+                or resp.get("id", "")
+                or resp.get("msgId", "")
+                or None
             )
 
-            # tenta extrair id retornado pela meta
-            if isinstance(resp, dict):
-                meta_id = resp.get("messages", [{}])[0].get("id")
-
-        else:
-            # EVOLUTION (padrão)
-            instance_name = os.getenv("EVOLUTION_INSTANCE_NAME", "lucas2")
-
-            resp = await send_evolution_text(
-                instance_name=instance_name,
-                to=to_wa,
-                text=payload.message
-            )
-
-            # tenta pegar algum id retornado
-            if isinstance(resp, dict):
-                meta_id = (
-                    resp.get("key", "")
-                    or resp.get("messageId", "")
-                    or resp.get("id", "")
-                    or resp.get("msgId", "")
-                    or None
-                )
-
-    except HTTPException:
-        # re-sobe HTTPException sem mascarar
-        cur.close()
-        conn.close()
-        raise
     except Exception as e:
         cur.close()
         conn.close()
-        raise HTTPException(status_code=500, detail=f"Falha ao enviar ({provider}): {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Falha ao enviar (evolution): {str(e)}")
 
     now_ts = int(datetime.utcnow().timestamp())
 
@@ -223,7 +191,7 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
         )
         VALUES (%s, 'outgoing', 'text', %s, %s, 'sent', %s, TO_TIMESTAMP(%s))
         RETURNING id
-    """, (conversation_id, payload.message, to_wa, meta_id, now_ts))
+    """, (conversation_id, payload.message, to_wa, provider_message_id, now_ts))
     msg_row = cur.fetchone()
 
     # atualiza conversa
@@ -243,7 +211,7 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
         "conversation_id": conversation_id,
         "message_id": msg_row["id"],
         "provider": provider,
-        "provider_message_id": meta_id,
+        "provider_message_id": provider_message_id,
         "provider_response": resp
     }
 
@@ -272,12 +240,11 @@ def _extract_evolution_message(body: dict) -> dict | None:
 
     # Evolution padrão
     # data = { "messages": [ { ... } ] }
-    if "messages" in data and isinstance(data["messages"], list):
+    if "messages" in data and isinstance(data["messages"], list) and data["messages"]:
         return data["messages"][0]
 
     # fallback
     return data
-
 
 
 def _extract_from_and_text(msg: dict) -> tuple[str | None, str | None]:
@@ -289,11 +256,12 @@ def _extract_from_and_text(msg: dict) -> tuple[str | None, str | None]:
 
     text = None
 
-    message = msg.get("message", {})
-    if "conversation" in message:
-        text = message["conversation"]
-    elif "extendedTextMessage" in message:
-        text = message["extendedTextMessage"].get("text")
+    message = msg.get("message", {}) or {}
+    if isinstance(message, dict):
+        if "conversation" in message:
+            text = message["conversation"]
+        elif "extendedTextMessage" in message and isinstance(message["extendedTextMessage"], dict):
+            text = message["extendedTextMessage"].get("text")
 
     return from_wa, text
 
@@ -419,141 +387,28 @@ async def receive_evolution_webhook(request: Request):
     return {"status": "ok"}
 
 
-
-
-
 # =======================
-# WEBHOOK META - NÃO PROTEGIDO (OBRIGATÓRIO)
-# =======================
-
-@app.get("/webhook/meta")
-async def verify_webhook(
-    hub_mode: str = Query(None, alias="hub.mode"),
-    hub_challenge: str = Query(None, alias="hub.challenge"),
-    hub_verify_token: str = Query(None, alias="hub.verify_token"),
-):
-    if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
-        return HTMLResponse(content=hub_challenge, status_code=200)
-    return HTMLResponse(content="Erro de verificação", status_code=403)
-
-
-@app.post("/webhook/meta")
-async def receive_webhook(request: Request):
-    """
-    Recebe mensagens e status enviados pela Meta.
-    Salva mensagens RECEBIDAS no banco.
-    Atribui a conversa ao usuário correto via metadata.phone_number_id.
-    """
-    body = await request.json()
-    entries = body.get("entry", [])
-
-    conn = get_conn()
-    cur = _dict_cursor(conn)
-
-    for entry in entries:
-        changes = entry.get("changes", [])
-        for change in changes:
-            value = change.get("value", {})
-
-            metadata = value.get("metadata", {}) or {}
-            phone_number_id = metadata.get("phone_number_id")
-
-            # Descobrir o usuário dono desse phone_number_id
-            user_id = None
-            if phone_number_id:
-                cur.execute("""
-                    SELECT id FROM users
-                    WHERE phone_number_id = %s AND is_active = true
-                    LIMIT 1
-                """, (str(phone_number_id),))
-                u = cur.fetchone()
-                if u:
-                    user_id = str(u["id"])
-
-            # Se não achar usuário, ainda salva (mas sem user_id) OU você pode ignorar.
-            # Aqui vamos salvar user_id NULL se não achar.
-            messages = value.get("messages", [])
-            for msg in messages:
-                from_wa = msg.get("from")  # telefone 5511...
-                text = msg.get("text", {}).get("body", "")
-                ts_str = msg.get("timestamp", "0")
-
-                try:
-                    ts = int(ts_str)
-                except ValueError:
-                    ts = int(datetime.utcnow().timestamp())
-
-                # 1) Garante a conversa (sempre do mesmo user_id)
-                if user_id:
-                    cur.execute("""
-                        SELECT id FROM conversations
-                        WHERE wa_id = %s AND user_id = %s
-                    """, (from_wa, user_id))
-                else:
-                    cur.execute("""
-                        SELECT id FROM conversations
-                        WHERE wa_id = %s AND user_id IS NULL
-                    """, (from_wa,))
-                row = cur.fetchone()
-
-                if row:
-                    conversation_id = row["id"]
-                else:
-                    cur.execute("""
-                        INSERT INTO conversations (user_id, wa_id, name, last_message_text, last_message_at, unread_count)
-                        VALUES (%s, %s, %s, %s, TO_TIMESTAMP(%s), 1)
-                        RETURNING id
-                    """, (user_id, from_wa, from_wa, text, ts))
-                    conversation_id = cur.fetchone()["id"]
-
-                # 2) Insere mensagem recebida
-                cur.execute("""
-                    INSERT INTO messages (
-                        conversation_id, direction, type, text, wa_id, status, meta_message_id, timestamp
-                    )
-                    VALUES (%s, 'incoming', 'text', %s, %s, 'received', NULL, TO_TIMESTAMP(%s))
-                """, (conversation_id, text, from_wa, ts))
-
-                # 3) Atualiza conversa
-                cur.execute("""
-                    UPDATE conversations
-                    SET last_message_text = %s,
-                        last_message_at = TO_TIMESTAMP(%s),
-                        unread_count = unread_count + 1
-                    WHERE id = %s
-                """, (text, ts, conversation_id))
-
-    conn.commit()
-    cur.close()
-    conn.close()
-    return {"status": "ok"}
-
-
-# =======================
-# CAMPANHAS (DISPARO EM MASSA) - PROTEGIDO
+# CAMPANHAS (DISPARO EM MASSA) - PROTEGIDO (SOMENTE EVOLUTION)
 # =======================
 
 @app.post("/api/campaigns")
 async def create_campaign(payload: CampaignCreate, background_tasks: BackgroundTasks, user=Depends(get_current_user)):
     """
-    Cria campanha do usuário logado e dispara em background.
+    Cria campanha do usuário logado e dispara em background (SOMENTE TEXTO via Evolution).
     """
     user_id = _get_user_id(user)
 
-    if not payload.template_name and not payload.message_text:
-        return {"error": "Informe template_name OU message_text."}
-
-    if payload.template_name and payload.message_text:
-        return {"error": "Use apenas template_name OU message_text, não os dois."}
+    if not payload.message_text:
+        return {"error": "Informe message_text."}
 
     conn = get_conn()
     cur = _dict_cursor(conn)
 
+    # phone_number_id / template removidos
     cur.execute("""
         INSERT INTO campaigns (
             user_id,
             name,
-            phone_number_id,
             template_name,
             template_language_code,
             template_body_params,
@@ -563,15 +418,11 @@ async def create_campaign(payload: CampaignCreate, background_tasks: BackgroundT
             failed,
             status
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 0, 'pending')
+        VALUES (%s, %s, NULL, NULL, NULL, NULL, %s, %s, 0, 0, 'pending')
         RETURNING id
     """, (
         user_id,
         payload.name,
-        payload.phone_number_id,
-        payload.template_name,
-        payload.template_language_code or "pt_BR",
-        payload.template_body_params,
         payload.message_text,
         len(payload.to_numbers),
     ))
@@ -579,7 +430,7 @@ async def create_campaign(payload: CampaignCreate, background_tasks: BackgroundT
     campaign_id = row["id"]
 
     for num in payload.to_numbers:
-        num_clean = num.strip()
+        num_clean = (num or "").strip()
         if not num_clean:
             continue
         cur.execute("""
@@ -603,8 +454,7 @@ async def list_campaigns(user=Depends(get_current_user)):
     conn = get_conn()
     cur = _dict_cursor(conn)
     cur.execute("""
-        SELECT id, name, phone_number_id, template_name, template_language_code,
-               message_text, total, sent, failed, status, created_at
+        SELECT id, name, message_text, total, sent, failed, status, created_at
         FROM campaigns
         WHERE user_id = %s
         ORDER BY created_at DESC
@@ -644,7 +494,7 @@ async def list_campaign_items(campaign_id: str, user=Depends(get_current_user)):
 
 async def run_campaign(campaign_id: str):
     """
-    Envia as mensagens de uma campanha em background.
+    Envia as mensagens de uma campanha em background (SOMENTE Evolution).
     """
     conn = get_conn()
     cur = _dict_cursor(conn)
@@ -659,11 +509,7 @@ async def run_campaign(campaign_id: str):
     cur.execute("UPDATE campaigns SET status='running' WHERE id=%s", (campaign_id,))
     conn.commit()
 
-    template_name = camp.get("template_name")
-    template_language_code = camp.get("template_language_code") or "pt_BR"
-    template_body_params = camp.get("template_body_params")
-    message_text = camp.get("message_text")
-    phone_number_id = camp.get("phone_number_id")
+    message_text = camp.get("message_text") or ""
 
     cur.execute("""
         SELECT id, "to", status
@@ -674,30 +520,21 @@ async def run_campaign(campaign_id: str):
     items = cur.fetchall()
 
     DELAY_SECONDS = 0.2
-    sent = camp.get("sent", 0)
-    failed = camp.get("failed", 0)
+    sent = camp.get("sent", 0) or 0
+    failed = camp.get("failed", 0) or 0
+
+    instance_name = os.getenv("EVOLUTION_INSTANCE_NAME", "lucas2")
 
     for item in items:
         item_id = item["id"]
         to_number = item["to"]
 
         try:
-            if template_name:
-                await send_whatsapp_template(
-                    to=to_number,
-                    phone_number_id=phone_number_id,
-                    template_name=template_name,
-                    language_code=template_language_code,
-                    body_params=template_body_params,
-                )
-            else:
-                instance_name = os.getenv("EVOLUTION_INSTANCE_NAME", "lucas2")
-                await send_evolution_text(
-                    instance_name=instance_name,
-                    to=to_number,
-                    text=message_text,
-                )
-
+            await send_evolution_text(
+                instance_name=instance_name,
+                to=to_number,
+                text=message_text,
+            )
 
             cur.execute("""
                 UPDATE campaign_items

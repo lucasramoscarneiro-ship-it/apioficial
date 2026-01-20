@@ -157,7 +157,7 @@ function renderMessages(msgs) {
     container.scrollTop = container.scrollHeight;
 }
 
-// Envia mensagem (EVOLUTION: NÃO EXISTE PHONE_NUMBER_ID)
+// Envia mensagem (EVOLUTION)
 async function sendMessage() {
     if (!selectedConversationId) {
         alert("Selecione uma conversa primeiro.");
@@ -233,51 +233,32 @@ function setupChatPolling() {
 
 
 // =======================
-// CAMPANHAS
+// CAMPANHAS (SOMENTE EVOLUTION - TEXTO)
 // =======================
 
+// (mantido para não quebrar seu HTML caso exista radio; sempre "text")
 function getCampaignMode() {
-    const radios = document.querySelectorAll("input[name='campaign-mode']");
-    for (const r of radios) {
-        if (r.checked) return r.value;
-    }
     return "text";
 }
 
+// Mantido (sem alternância Meta/Template)
 function setupCampaignModeSwitch() {
-    const radios = document.querySelectorAll("input[name='campaign-mode']");
     const textFields = document.getElementById("campaign-text-fields");
     const templateFields = document.getElementById("campaign-template-fields");
 
-    radios.forEach(r => {
-        r.addEventListener("change", () => {
-            const mode = getCampaignMode();
-            if (mode === "text") {
-                if (textFields) textFields.style.display = "block";
-                if (templateFields) templateFields.style.display = "none";
-            } else {
-                if (textFields) textFields.style.display = "none";
-                if (templateFields) templateFields.style.display = "block";
-            }
-        });
-    });
+    if (textFields) textFields.style.display = "block";
+    if (templateFields) templateFields.style.display = "none";
 }
 
 async function startCampaign() {
     const nameEl = document.getElementById("campaign-name");
-    const phoneEl = document.getElementById("campaign-phone-number-id");
     const numbersEl = document.getElementById("campaign-numbers");
 
     const name = (nameEl?.value || "").trim();
-    const phoneNumberId = (phoneEl?.value || "").trim();
     const numbersText = (numbersEl?.value || "").trim();
 
-    const mode = getCampaignMode();
-
-    // Obs: Campanha pode usar Meta (template) ou Evolution (texto).
-    // Por enquanto mantive igual seu comportamento atual.
-    if (!name || !phoneNumberId || !numbersText) {
-        alert("Preencha nome, PHONE_NUMBER_ID e os números.");
+    if (!name || !numbersText) {
+        alert("Preencha nome e os números.");
         return;
     }
 
@@ -286,53 +267,20 @@ async function startCampaign() {
         .map(n => n.trim())
         .filter(n => n.length > 0);
 
+    const msgEl = document.getElementById("campaign-message");
+    const message = (msgEl?.value || "").trim();
+
+    if (!message) {
+        alert("Digite a mensagem de texto.");
+        return;
+    }
+
+    // Corpo somente Evolution
     let body = {
         name: name,
-        phone_number_id: phoneNumberId,
         to_numbers: toNumbers,
+        message_text: message
     };
-
-    if (mode === "text") {
-        const msgEl = document.getElementById("campaign-message");
-        const message = (msgEl?.value || "").trim();
-
-        if (!message) {
-            alert("Digite a mensagem de texto.");
-            return;
-        }
-
-        body.message_text = message;
-        body.template_name = null;
-        body.template_language_code = null;
-        body.template_body_params = null;
-
-    } else {
-        const tplNameEl = document.getElementById("campaign-template-name");
-        const tplLangEl = document.getElementById("campaign-template-language");
-        const tplParamsEl = document.getElementById("campaign-template-params");
-
-        const tplName = (tplNameEl?.value || "").trim();
-        const tplLang = ((tplLangEl?.value || "").trim() || "pt_BR");
-        const tplParamsText = (tplParamsEl?.value || "").trim();
-
-        if (!tplName) {
-            alert("Digite o nome do template.");
-            return;
-        }
-
-        let params = [];
-        if (tplParamsText) {
-            params = tplParamsText
-                .split("\n")
-                .map(p => p.trim())
-                .filter(p => p.length > 0);
-        }
-
-        body.template_name = tplName;
-        body.template_language_code = tplLang;
-        body.template_body_params = params;
-        body.message_text = null;
-    }
 
     try {
         const res = await api("/api/campaigns", {

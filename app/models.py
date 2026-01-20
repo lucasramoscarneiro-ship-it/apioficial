@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, Dict, List, Literal
+from typing import Optional, Dict, List
 from enum import Enum
 from datetime import datetime
 import uuid
@@ -69,19 +69,12 @@ class Message(BaseModel):
 
 # =======================
 # REQUEST DE ENVIO (CHAT)
-# - Evolution NÃO usa phone_number_id
-# - Meta usa phone_number_id
+# - SOMENTE EVOLUTION
 # =======================
 
 class SendTextRequest(BaseModel):
     to: str                 # telefone destino (55119... ou 55119...@s.whatsapp.net)
     message: str            # texto da mensagem
-
-    # provider padrão = evolution (não exige phone_number_id)
-    provider: Literal["evolution", "meta"] = "evolution"
-
-    # só é necessário se provider="meta"
-    phone_number_id: Optional[str] = None
 
 
 def create_or_get_conversation(wa_id: str) -> Conversation:
@@ -107,7 +100,7 @@ def create_or_get_conversation(wa_id: str) -> Conversation:
 
 # =======================
 # MODELOS DE CAMPANHA
-# (Campanha Meta continua usando phone_number_id, ok)
+# - SOMENTE EVOLUTION (TEXTO)
 # =======================
 
 class CampaignStatus(str, Enum):
@@ -120,15 +113,9 @@ class CampaignStatus(str, Enum):
 class Campaign(BaseModel):
     id: str
     name: str
-    phone_number_id: str
 
-    # Se for template oficial:
-    template_name: Optional[str] = None
-    template_language_code: Optional[str] = "pt_BR"
-    template_body_params: Optional[List[str]] = None  # para {{1}}, {{2}}, etc.
-
-    # Se for texto livre:
-    message_text: Optional[str] = None
+    # SOMENTE texto livre (Evolution)
+    message_text: str
 
     total: int = 0
     sent: int = 0
@@ -152,15 +139,9 @@ class CampaignItem(BaseModel):
 
 class CampaignCreate(BaseModel):
     name: str
-    phone_number_id: str
 
-    # OU template oficial:
-    template_name: Optional[str] = None
-    template_language_code: Optional[str] = "pt_BR"
-    template_body_params: Optional[List[str]] = None
-
-    # OU mensagem de texto livre:
-    message_text: Optional[str] = None
+    # SOMENTE mensagem de texto (Evolution)
+    message_text: str
 
     # Lista de números (55119...)
     to_numbers: List[str]
