@@ -19,7 +19,6 @@ from .termos import router as termos_router
 from .auth.auth_router import router as auth_router
 from .auth.dependencies import get_current_user
 from .evolution_client import send_evolution_text
-from .webhook import router as webhook_router
 
 
 app = FastAPI(title="Painel WhatsApp LRC")
@@ -27,7 +26,6 @@ app = FastAPI(title="Painel WhatsApp LRC")
 app.include_router(auth_router)
 app.include_router(politica_router)
 app.include_router(termos_router)
-app.include_router(webhook_router)
 
 # arquivos estáticos (CSS/JS) e templates
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
