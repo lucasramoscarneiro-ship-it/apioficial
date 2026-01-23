@@ -167,13 +167,12 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
 
         # tenta pegar algum id retornado
         if isinstance(resp, dict):
-            provider_message_id = (
-                resp.get("key", "")
-                or resp.get("messageId", "")
-                or resp.get("id", "")
-                or resp.get("msgId", "")
-                or None
-            )
+            key = resp.get("key")
+            if isinstance(key, dict):
+                provider_message_id = key.get("id") or None
+            else:
+                provider_message_id = resp.get("messageId") or resp.get("id") or resp.get("msgId") or None
+
 
     except Exception as e:
         cur.close()
@@ -308,6 +307,15 @@ async def receive_evolution_webhook(request: Request):
 
     if not msg or not isinstance(msg, dict):
         return {"status": "ok", "note": "no-message"}
+
+    key = msg.get("key") or {}
+    msg_id = key.get("id")
+    from_me = bool(key.get("fromMe"))
+
+    # 👉 se a mensagem foi enviada por você mesmo, IGNORA (evita duplicar)
+    if from_me:
+        return {"status": "ok", "ignored": "fromMe", "msg_id": msg_id}
+
 
     from_wa, text = _extract_from_and_text(msg)
 

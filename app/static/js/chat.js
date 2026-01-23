@@ -72,7 +72,9 @@ function renderMessages(msgs) {
 
   msgs.forEach((m) => {
     const row = document.createElement("div");
-    row.className = "message-row " + (m.direction || "");
+    const dir = (m.direction || "").toLowerCase();
+    row.className = "message-row " + (dir === "outgoing" ? "outgoing" : "incoming");
+
 
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
