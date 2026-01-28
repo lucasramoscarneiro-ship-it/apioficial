@@ -20,12 +20,15 @@ from .auth.auth_router import router as auth_router
 from .auth.dependencies import get_current_user
 from .evolution_client import send_evolution_text
 
+from .webhook import router as webhook_router
+
 
 app = FastAPI(title="Painel WhatsApp LRC")
 
 app.include_router(auth_router)
 app.include_router(politica_router)
 app.include_router(termos_router)
+app.include_router(webhook_router)
 
 # arquivos estáticos (CSS/JS) e templates
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -173,7 +176,6 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
             else:
                 provider_message_id = resp.get("messageId") or resp.get("id") or resp.get("msgId") or None
 
-
     except Exception as e:
         cur.close()
         conn.close()
@@ -316,7 +318,6 @@ async def receive_evolution_webhook(request: Request):
     if from_me:
         return {"status": "ok", "ignored": "fromMe", "msg_id": msg_id}
 
-
     from_wa, text = _extract_from_and_text(msg)
 
     # normaliza wa_id
@@ -369,15 +370,28 @@ async def receive_evolution_webhook(request: Request):
         """, (user_id, from_wa, from_wa, text, ts))
         conversation_id = cur.fetchone()["id"]
 
-    # 4) Insere mensagem
+    # 4) DEDUPE por msg_id (idempotência)
+    # Se o Evolution reenviar o mesmo evento, não duplicamos no banco.
+    if msg_id:
+        cur.execute(
+            "SELECT 1 FROM messages WHERE meta_message_id = %s LIMIT 1",
+            (str(msg_id),)
+        )
+        if cur.fetchone():
+            conn.commit()
+            cur.close()
+            conn.close()
+            return {"status": "ok", "deduped": True, "msg_id": msg_id}
+
+    # 5) Insere mensagem (salvando msg_id em meta_message_id)
     cur.execute("""
         INSERT INTO messages (
             conversation_id, direction, type, text, wa_id, status, meta_message_id, timestamp
         )
-        VALUES (%s, 'incoming', 'text', %s, %s, 'received', NULL, TO_TIMESTAMP(%s))
-    """, (conversation_id, text, from_wa, ts))
+        VALUES (%s, 'incoming', 'text', %s, %s, 'received', %s, TO_TIMESTAMP(%s))
+    """, (conversation_id, text, from_wa, str(msg_id) if msg_id else None, ts))
 
-    # 5) Atualiza conversa (SQL correto)
+    # 6) Atualiza conversa (SQL correto)
     cur.execute("""
         UPDATE conversations
         SET last_message_text = %s,
