@@ -1,13 +1,15 @@
-from fastapi import FastAPI, Request, BackgroundTasks, Query, Depends, HTTPException
+from fastapi import FastAPI, Request, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
 import asyncio
+import re
 from datetime import datetime
 import os
 
+import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from .db import get_conn
@@ -23,6 +25,7 @@ from .evolution_client import send_evolution_text
 from .webhook import router as webhook_router
 from .chatbot import decide_bot_reply
 
+from .appointments_polling import appointments_poller
 
 
 app = FastAPI(title="Painel WhatsApp LRC")
@@ -45,6 +48,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# =======================
+# BACKGROUND: POLLER DE AGENDAMENTOS
+# =======================
+app.state.appt_stop_event = asyncio.Event()
+app.state.appt_task = None
+
+@app.on_event("startup")
+async def _startup_tasks():
+    # inicia o poller do banco do agendamento
+    app.state.appt_task = asyncio.create_task(
+        appointments_poller(app.state.appt_stop_event)
+    )
+
+@app.on_event("shutdown")
+async def _shutdown_tasks():
+    # para o poller sem travar o shutdown
+    try:
+        app.state.appt_stop_event.set()
+        if app.state.appt_task:
+            app.state.appt_task.cancel()
+            try:
+                await app.state.appt_task
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 
 # =======================
 # FRONTEND - PÁGINA ÚNICA COM ABAS
@@ -65,6 +95,23 @@ def _dict_cursor(conn):
 def _get_user_id(user):
     # get_current_user retorna dict
     return str(user["id"])
+
+def _extract_delay(bot_text: str):
+    """
+    Lê marcador do chatbot: "__DELAY__=1.85__\ntexto..."
+    Retorna (delay_seconds, texto_limpo)
+    """
+    if not bot_text:
+        return 0.0, bot_text
+    m = re.match(r"^__DELAY__=([0-9.]+)__\n", bot_text)
+    if not m:
+        return 0.0, bot_text
+    try:
+        delay = float(m.group(1))
+    except Exception:
+        delay = 0.0
+    clean = bot_text[m.end():]
+    return delay, clean
 
 
 # =======================
@@ -123,6 +170,7 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
     """
     Envia mensagem SOMENTE via Evolution.
     Salva no banco e atualiza a conversa.
+    (OPÇÃO 3) desliga o bot automaticamente quando o atendente humano responde
     """
     user_id = _get_user_id(user)
 
@@ -203,6 +251,17 @@ async def send_text_message(payload: SendTextRequest, user=Depends(get_current_u
         WHERE id = %s
     """, (payload.message, now_ts, conversation_id))
 
+    # ✅ OPÇÃO 3: desliga o bot automaticamente quando o humano responde
+    try:
+        cur.execute("""
+            UPDATE conversations
+            SET bot_enabled = false
+            WHERE id = %s
+        """, (conversation_id,))
+    except Exception:
+        # se a coluna ainda não existir, não quebra envio
+        pass
+
     conn.commit()
     cur.close()
     conn.close()
@@ -233,7 +292,6 @@ def _extract_evolution_instance_name(body: dict) -> str | None:
         or None
     )
 
-
 def _extract_evolution_message(body: dict) -> dict | None:
     data = body.get("data")
     if not isinstance(data, dict):
@@ -246,7 +304,6 @@ def _extract_evolution_message(body: dict) -> dict | None:
 
     # fallback
     return data
-
 
 def _extract_from_and_text(msg: dict) -> tuple[str | None, str | None]:
     from_wa = (
@@ -265,7 +322,6 @@ def _extract_from_and_text(msg: dict) -> tuple[str | None, str | None]:
             text = message["extendedTextMessage"].get("text")
 
     return from_wa, text
-
 
 def _extract_timestamp(msg: dict) -> int:
     ts = (
@@ -292,7 +348,6 @@ def _extract_timestamp(msg: dict) -> int:
         return ts_int
     except Exception:
         return int(datetime.utcnow().timestamp())
-
 
 
 @app.post("/webhook/evolution")
@@ -356,28 +411,69 @@ async def receive_evolution_webhook(request: Request):
         except Exception:
             user_id = None
 
-    # 3) Garante conversa
-    if user_id:
-        cur.execute("""
-            SELECT id FROM conversations
-            WHERE wa_id = %s AND user_id = %s
-        """, (from_wa, user_id))
+    # 3) Garante conversa + (OPÇÃO 1) checa bot_enabled
+    bot_enabled = True
+    row = None
+
+    # tenta buscar com bot_enabled (se a coluna existir)
+    try:
+        if user_id:
+            cur.execute("""
+                SELECT id, bot_enabled
+                FROM conversations
+                WHERE wa_id = %s AND user_id = %s
+            """, (from_wa, user_id))
+        else:
+            cur.execute("""
+                SELECT id, bot_enabled
+                FROM conversations
+                WHERE wa_id = %s AND user_id IS NULL
+            """, (from_wa,))
+        row = cur.fetchone()
+    except Exception:
+        row = None
+
+    # fallback: se não conseguiu por causa da coluna, busca sem bot_enabled
+    if row is None:
+        if user_id:
+            cur.execute("""
+                SELECT id
+                FROM conversations
+                WHERE wa_id = %s AND user_id = %s
+            """, (from_wa, user_id))
+        else:
+            cur.execute("""
+                SELECT id
+                FROM conversations
+                WHERE wa_id = %s AND user_id IS NULL
+            """, (from_wa,))
+        row = cur.fetchone()
+        bot_enabled = True
     else:
-        cur.execute("""
-            SELECT id FROM conversations
-            WHERE wa_id = %s AND user_id IS NULL
-        """, (from_wa,))
-    row = cur.fetchone()
+        bot_enabled = row.get("bot_enabled", True)
 
     if row:
         conversation_id = row["id"]
     else:
-        cur.execute("""
-            INSERT INTO conversations (user_id, wa_id, name, last_message_text, last_message_at, unread_count)
-            VALUES (%s, %s, %s, %s, TO_TIMESTAMP(%s), 1)
-            RETURNING id
-        """, (user_id, from_wa, from_wa, text, ts))
-        conversation_id = cur.fetchone()["id"]
+        # tenta inserir com bot_enabled (se a coluna existir)
+        try:
+            cur.execute("""
+                INSERT INTO conversations (user_id, wa_id, name, last_message_text, last_message_at, unread_count, bot_enabled)
+                VALUES (%s, %s, %s, %s, TO_TIMESTAMP(%s), 1, true)
+                RETURNING id, bot_enabled
+            """, (user_id, from_wa, from_wa, text, ts))
+            r2 = cur.fetchone()
+            conversation_id = r2["id"]
+            bot_enabled = r2.get("bot_enabled", True)
+        except Exception:
+            # fallback sem bot_enabled
+            cur.execute("""
+                INSERT INTO conversations (user_id, wa_id, name, last_message_text, last_message_at, unread_count)
+                VALUES (%s, %s, %s, %s, TO_TIMESTAMP(%s), 1)
+                RETURNING id
+            """, (user_id, from_wa, from_wa, text, ts))
+            conversation_id = cur.fetchone()["id"]
+            bot_enabled = True
 
     # 4) DEDUPE por msg_id (idempotência)
     # Se o Evolution reenviar o mesmo evento, não duplicamos no banco.
@@ -391,14 +487,43 @@ async def receive_evolution_webhook(request: Request):
             cur.close()
             conn.close()
             return {"status": "ok", "deduped": True, "msg_id": msg_id}
+    else:
+        # ✅ DEDUPE FALLBACK quando msg_id não vem (ou vem vazio)
+        # evita duplicar pelo "mesmo texto" em janela de 2s
+        try:
+            cur.execute("""
+                SELECT 1
+                FROM messages
+                WHERE conversation_id = %s
+                  AND direction = 'incoming'
+                  AND wa_id = %s
+                  AND type = 'text'
+                  AND text = %s
+                  AND ABS(EXTRACT(EPOCH FROM (timestamp - TO_TIMESTAMP(%s)))) <= 2
+                LIMIT 1
+            """, (conversation_id, from_wa, text, ts))
+            if cur.fetchone():
+                conn.commit()
+                cur.close()
+                conn.close()
+                return {"status": "ok", "deduped": True, "fallback": True}
+        except Exception:
+            pass
 
     # 5) Insere mensagem (salvando msg_id em meta_message_id)
-    cur.execute("""
-        INSERT INTO messages (
-            conversation_id, direction, type, text, wa_id, status, meta_message_id, timestamp
-        )
-        VALUES (%s, 'incoming', 'text', %s, %s, 'received', %s, TO_TIMESTAMP(%s))
-    """, (conversation_id, text, from_wa, str(msg_id) if msg_id else None, ts))
+    try:
+        cur.execute("""
+            INSERT INTO messages (
+                conversation_id, direction, type, text, wa_id, status, meta_message_id, timestamp
+            )
+            VALUES (%s, 'incoming', 'text', %s, %s, 'received', %s, TO_TIMESTAMP(%s))
+        """, (conversation_id, text, from_wa, str(msg_id) if msg_id else None, ts))
+    except psycopg2.IntegrityError:
+        # se existir algum unique index no futuro, não quebra
+        conn.rollback()
+        cur.close()
+        conn.close()
+        return {"status": "ok", "deduped": True, "integrity": True}
 
     # 6) Atualiza conversa (SQL correto)
     cur.execute("""
@@ -413,19 +538,28 @@ async def receive_evolution_webhook(request: Request):
     cur.close()
     conn.close()
 
+    # ✅ OPÇÃO 1: se bot estiver desligado nessa conversa, não responde
+    if bot_enabled is False:
+        return {"status": "ok", "bot": "disabled"}
+
     # =========================
     # CHATBOT (resposta automática)
     # =========================
     try:
         bot_text = decide_bot_reply(conversation_id, text)
         if bot_text:
+            # delay humano (se vier do chatbot)
+            delay, bot_text_clean = _extract_delay(bot_text)
+            if delay and delay > 0:
+                await asyncio.sleep(delay)
+
             instance_name_env = os.getenv("EVOLUTION_INSTANCE_NAME", "lucas2")
 
             # Envia resposta do bot via Evolution
             resp_bot = await send_evolution_text(
                 instance_name=instance_name_env,
                 to=from_wa,
-                text=bot_text
+                text=bot_text_clean
             )
 
             # (opcional, mas recomendado) salva a msg do bot no banco
@@ -447,14 +581,14 @@ async def receive_evolution_webhook(request: Request):
                     conversation_id, direction, type, text, wa_id, status, meta_message_id, timestamp
                 )
                 VALUES (%s, 'outgoing', 'text', %s, %s, 'sent', %s, TO_TIMESTAMP(%s))
-            """, (conversation_id, bot_text, from_wa, provider_message_id, now_ts))
+            """, (conversation_id, bot_text_clean, from_wa, provider_message_id, now_ts))
 
             cur2.execute("""
                 UPDATE conversations
                 SET last_message_text = %s,
                     last_message_at = TO_TIMESTAMP(%s)
                 WHERE id = %s
-            """, (bot_text, now_ts, conversation_id))
+            """, (bot_text_clean, now_ts, conversation_id))
 
             conn2.commit()
             cur2.close()
@@ -464,7 +598,6 @@ async def receive_evolution_webhook(request: Request):
         print("❌ Erro chatbot:", str(e))
 
     return {"status": "ok"}
-
 
 
 # =======================
