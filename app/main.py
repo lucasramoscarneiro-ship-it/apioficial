@@ -21,6 +21,8 @@ from .auth.dependencies import get_current_user
 from .evolution_client import send_evolution_text
 
 from .webhook import router as webhook_router
+from .chatbot import decide_bot_reply
+
 
 
 app = FastAPI(title="Painel WhatsApp LRC")
@@ -266,7 +268,6 @@ def _extract_from_and_text(msg: dict) -> tuple[str | None, str | None]:
 
 
 def _extract_timestamp(msg: dict) -> int:
-    # tenta extrair timestamp; fallback agora
     ts = (
         msg.get("timestamp")
         or msg.get("messageTimestamp")
@@ -275,15 +276,23 @@ def _extract_timestamp(msg: dict) -> int:
         or None
     )
     try:
+        now = int(datetime.utcnow().timestamp())
         if ts is None:
-            return int(datetime.utcnow().timestamp())
-        # se vier em ms
+            return now
+
         ts_int = int(ts)
-        if ts_int > 10_000_000_000:  # > ~2286-11 em segundos -> provavelmente ms
-            ts_int = ts_int // 1000
+        if ts_int > 10_000_000_000:
+            ts_int //= 1000
+
+        # Guard rail: evita datas absurdamente antigas
+        # (ex: < 2020-01-01)
+        if ts_int < 1577836800:
+            return now
+
         return ts_int
     except Exception:
         return int(datetime.utcnow().timestamp())
+
 
 
 @app.post("/webhook/evolution")
@@ -404,7 +413,58 @@ async def receive_evolution_webhook(request: Request):
     cur.close()
     conn.close()
 
+    # =========================
+    # CHATBOT (resposta automática)
+    # =========================
+    try:
+        bot_text = decide_bot_reply(conversation_id, text)
+        if bot_text:
+            instance_name_env = os.getenv("EVOLUTION_INSTANCE_NAME", "lucas2")
+
+            # Envia resposta do bot via Evolution
+            resp_bot = await send_evolution_text(
+                instance_name=instance_name_env,
+                to=from_wa,
+                text=bot_text
+            )
+
+            # (opcional, mas recomendado) salva a msg do bot no banco
+            provider_message_id = None
+            if isinstance(resp_bot, dict):
+                key2 = resp_bot.get("key")
+                if isinstance(key2, dict):
+                    provider_message_id = key2.get("id") or None
+                else:
+                    provider_message_id = resp_bot.get("messageId") or resp_bot.get("id") or resp_bot.get("msgId") or None
+
+            now_ts = int(datetime.utcnow().timestamp())
+
+            conn2 = get_conn()
+            cur2 = _dict_cursor(conn2)
+
+            cur2.execute("""
+                INSERT INTO messages (
+                    conversation_id, direction, type, text, wa_id, status, meta_message_id, timestamp
+                )
+                VALUES (%s, 'outgoing', 'text', %s, %s, 'sent', %s, TO_TIMESTAMP(%s))
+            """, (conversation_id, bot_text, from_wa, provider_message_id, now_ts))
+
+            cur2.execute("""
+                UPDATE conversations
+                SET last_message_text = %s,
+                    last_message_at = TO_TIMESTAMP(%s)
+                WHERE id = %s
+            """, (bot_text, now_ts, conversation_id))
+
+            conn2.commit()
+            cur2.close()
+            conn2.close()
+
+    except Exception as e:
+        print("❌ Erro chatbot:", str(e))
+
     return {"status": "ok"}
+
 
 
 # =======================
